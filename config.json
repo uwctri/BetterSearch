@@ -1,0 +1,44 @@
+{
+    "name": "Better Search",
+    "description": "A drop in replacement for the default Add/Edit Records search box that allows for more advanced searching. This module also adds a new search box to the Data Entry page that allows for searching by record ID, instrument, and event.",
+    "namespace": "UWMadison\\BetterSearch",
+    "authors": [
+        {
+            "name": "Adam Nunez",
+            "email": "Adam.Nunez@ctri.wisc.edu",
+            "institution": "UW Madison - Center for Tobacco Research and Intervention"
+        }
+    ],
+    "framework-version": 12,
+    "project-settings": [
+        {
+            "key": "text",
+            "name": "The below settings all pertain to the Add/Edit Records page.",
+            "type": "description"
+        },
+        {
+            "key": "hide_list",
+            "name": "<b>Hide Record List Dropdown</b>",
+            "type": "checkbox"
+        },
+        {
+            "key": "hide_search",
+            "name": "<b>Hide Default Data Search Box</b>",
+            "type": "checkbox"
+        },
+        {
+            "key": "hide_count",
+            "name": "<b>Hide Record List Dropdown when __ many records exist</b>",
+            "type": "checkbox"
+        },
+        {
+            "key": "field",
+            "name": "<b>Searchable Field</b>",
+            "type": "field-list",
+            "repeatable": true
+        }
+    ],
+    "compatibility": {
+        "redcap-version-min": "13.1.0"
+    }
+}
