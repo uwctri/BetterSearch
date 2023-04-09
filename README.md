@@ -7,3 +7,9 @@
 You can install the module from the REDCap EM repo or drop it directly in your modules folder (i.e. `redcap/modules/better_search_v1.0.0`) manually.
 
 ## Configuration
+
+## TODO
+
+* Send the user to a new Add/Edit Records page that doesn't load anything
+* Search doesn't work yet
+* No clue what the new search should look like
