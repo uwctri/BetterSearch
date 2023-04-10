@@ -10,6 +10,5 @@ You can install the module from the REDCap EM repo or drop it directly in your m
 
 ## TODO
 
-* Send the user to a new Add/Edit Records page that doesn't load anything
 * Search doesn't work yet
 * No clue what the new search should look like

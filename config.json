@@ -10,6 +10,20 @@
         }
     ],
     "framework-version": 12,
+    "compatibility": {
+        "redcap-version-min": "13.1.0"
+    },
+    "links": {
+        "project": [
+            {
+                "name": "Better Search",
+                "icon": "fas fa-search",
+                "url": "index.php",
+                "show-header-and-footer": true,
+                "hidden": true
+            }
+        ]
+    },
     "project-settings": [
         {
             "key": "text",
@@ -37,8 +51,5 @@
             "type": "field-list",
             "repeatable": true
         }
-    ],
-    "compatibility": {
-        "redcap-version-min": "13.1.0"
-    }
+    ]
 }
