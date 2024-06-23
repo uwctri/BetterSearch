@@ -1,4 +1,4 @@
-# DataResolutionReminder - Redcap External Module
+# Better Search - Redcap External Module
 
 ## What does it do?
 
