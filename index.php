@@ -175,14 +175,24 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                 <?php endforeach; ?>
                             </select>
                         <?php endif; ?>
-                        <button type="button" id="bs-quick-open-btn" class="bs-btn bs-btn-quick-open" style="display:none;" title="Open record immediately (Shift + Enter)">
-                            <i class="fas fa-external-link-alt"></i> <span id="bs-quick-open-label">Open Record</span> <kbd class="bs-kbd">Shift ↵</kbd>
-                        </button>
                         <button type="submit" id="bs-search-btn" class="bs-btn bs-btn-search">
                             <i class="fas fa-search"></i> <span id="bs-search-btn-label">Search</span>
                         </button>
                     </div>
                 </form>
+
+                <div id="bs-quick-open-banner" class="bs-quick-open-banner" style="display:none;">
+                    <div class="bs-quick-open-info">
+                        <i class="fas fa-arrow-circle-right bs-qo-icon"></i>
+                        <span class="bs-qo-lead">Direct Match:</span>
+                        <strong id="bs-qo-id" class="bs-qo-id"></strong>
+                        <span id="bs-qo-label" class="bs-qo-label"></span>
+                        <span id="bs-qo-reason" class="bs-qo-reason"></span>
+                    </div>
+                    <button type="button" id="bs-quick-open-btn" class="bs-btn bs-btn-quick-open" title="Open record immediately (Shift + Enter)">
+                        <i class="fas fa-external-link-alt"></i> Open Record <kbd class="bs-kbd">Shift ↵</kbd>
+                    </button>
+                </div>
 
                 <div id="bs-chip-bar" class="bs-chip-bar"></div>
 
@@ -380,6 +390,10 @@ if ($context['longitudinal'])
         hasCustomLabel: <?= $hasCustomLabel ? 'true' : 'false' ?>,
         hasSecondaryPk: <?= $hasSecondaryPk ? 'true' : 'false' ?>,
         selectedArm: <?= (int) $selectedArm ?>,
+        singleForm: <?= json_encode((string) ($context['single_form'] ?? '')) ?>,
+        multipleArms: <?= $context['multiple_arms'] ? 'true' : 'false' ?>,
+        userDagId: <?= (int) ($context['user_dag_id'] ?? 0) ?>,
+        autoIncSet: <?= $context['auto_inc_set'] ? 'true' : 'false' ?>,
         pkField: <?= json_encode((string) $context['pk']) ?>,
         pkLabel: <?= json_encode((string) $context['pk_label']) ?>,
         uniqueFields: <?= json_encode($uniqueFields) ?>,

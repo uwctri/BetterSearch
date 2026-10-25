@@ -29,11 +29,55 @@
         const searchForm = document.getElementById('bs-search-form');
         const searchInput = document.getElementById('bs-search-input');
         const searchBtnLabel = document.getElementById('bs-search-btn-label');
+        const quickOpenBanner = document.getElementById('bs-quick-open-banner');
         const quickOpenBtn = document.getElementById('bs-quick-open-btn');
-        const quickOpenLabel = document.getElementById('bs-quick-open-label');
+        const qoIdEl = document.getElementById('bs-qo-id');
+        const qoLabelEl = document.getElementById('bs-qo-label');
+        const qoReasonEl = document.getElementById('bs-qo-reason');
         const chipBar = document.getElementById('bs-chip-bar');
         const recentRowEl = document.getElementById('bs-recent-records-row');
         const defaultPlaceholder = searchInput ? (searchInput.getAttribute('placeholder') || '') : '';
+
+        const singleForm = cfg.singleForm || '';
+        const multipleArms = Boolean(cfg.multipleArms);
+        const userDagId = cfg.userDagId || 0;
+        const autoIncSet = Boolean(cfg.autoIncSet);
+        const locatorStorageKey = 'bs_loc_p' + projectId + '_d' + userDagId;
+
+        let locatorMap = {};
+        let locatorSyncInProgress = false;
+
+        const getSessionLocators = () => {
+            try {
+                const raw = sessionStorage.getItem(locatorStorageKey);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                return null;
+            }
+        };
+
+        const setSessionLocators = (data) => {
+            try {
+                sessionStorage.setItem(locatorStorageKey, JSON.stringify(data));
+                return true;
+            } catch (e) {
+                // Quota exceeded; in-memory locatorMap continues to serve in RAM
+                return false;
+            }
+        };
+
+        // Clean up any persistent database from previous versions to maintain HIPAA compliance
+        if (window.indexedDB && window.indexedDB.deleteDatabase) {
+            try {
+                window.indexedDB.deleteDatabase('BetterSearchDB');
+            } catch (e) {}
+        }
+
+        // Immediately load any locators cached for this active tab session
+        const initialSessionData = getSessionLocators();
+        if (initialSessionData && initialSessionData.locators)
+            locatorMap = initialSessionData.locators;
+
         const uniqueFields = new Set(cfg.uniqueFields || [cfg.pkField]);
         const pkField = cfg.pkField || 'record_id';
         const pkLabel = cfg.pkLabel || 'Record ID';
@@ -184,6 +228,35 @@
             return num >= 1000 ? (num / 1000).toFixed(2) + 's' : num + ' ms';
         };
 
+        const buildRecordUrl = (recId) => {
+            return webroot + (singleForm
+                ? ('DataEntry/index.php?pid=' + projectId + '&id=' + encodeURIComponent(recId) + '&page=' + encodeURIComponent(singleForm))
+                : ('DataEntry/record_home.php?pid=' + projectId + '&id=' + encodeURIComponent(recId) + (multipleArms ? ('&arm=' + selectedArm) : '')));
+        };
+
+        const checkInstantLocator = (query) => {
+            const cleanQ = (query || '').trim().toLowerCase();
+            if (!cleanQ || !locatorMap)
+                return null;
+
+            const entry = locatorMap[cleanQ];
+            if (entry && Array.isArray(entry)) {
+                const [recId, customLabel] = entry;
+                const recStr = String(recId);
+                const isPk = (recStr.toLowerCase() === cleanQ);
+                return {
+                    record: recStr,
+                    record_url: buildRecordUrl(recStr),
+                    fieldLabel: isPk ? pkLabel : 'Identifier',
+                    matchedValue: query.trim(),
+                    customLabel: customLabel || '',
+                    isPk: isPk
+                };
+            }
+
+            return null;
+        };
+
         const findExactAutoMatch = (query, records) => {
             const cleanQ = (query || '').trim().toLowerCase();
             if (!cleanQ || !records || records.length === 0)
@@ -198,9 +271,10 @@
                 if (recId === cleanQ) {
                     pkMatches.push({
                         record: rec.record,
-                        record_url: rec.record_url,
+                        record_url: rec.record_url || buildRecordUrl(rec.record),
                         fieldLabel: pkLabel,
                         matchedValue: rec.record,
+                        customLabel: rec.custom_label || '',
                         isPk: true
                     });
                 }
@@ -224,9 +298,10 @@
                 if (rec.secondary_pk_value && String(rec.secondary_pk_value).trim().toLowerCase() === cleanQ) {
                     recordMatched = {
                         record: rec.record,
-                        record_url: rec.record_url,
+                        record_url: rec.record_url || buildRecordUrl(rec.record),
                         fieldLabel: 'Secondary ID',
                         matchedValue: rec.secondary_pk_value,
+                        customLabel: rec.custom_label || '',
                         isPk: false
                     };
                 }
@@ -247,9 +322,10 @@
                             const fMeta = (fieldMetaMap && fieldMetaMap[fname]) ? fieldMetaMap[fname] : [fname];
                             recordMatched = {
                                 record: rec.record,
-                                record_url: rec.record_url,
+                                record_url: rec.record_url || buildRecordUrl(rec.record),
                                 fieldLabel: fMeta[0] || fname,
                                 matchedValue: isTuple ? hit[2] : hit.value,
+                                customLabel: rec.custom_label || '',
                                 isPk: false
                             };
                             break;
@@ -269,21 +345,137 @@
         };
 
         const updateAutoMatch = (query, candidateRecords) => {
-            const recs = candidateRecords || currentRecords || [];
-            const match = findExactAutoMatch(query, recs);
+            const cleanQ = (query || '').trim();
+            if (!cleanQ) {
+                currentExactMatch = null;
+                if (quickOpenBanner)
+                    quickOpenBanner.style.display = 'none';
+                return null;
+            }
+
+            let match = null;
+            if (candidateRecords && candidateRecords.length > 0)
+                match = findExactAutoMatch(cleanQ, candidateRecords);
+
+            if (!match)
+                match = checkInstantLocator(cleanQ);
+
             currentExactMatch = match;
 
-            if (quickOpenBtn) {
+            if (quickOpenBanner) {
                 if (match && match.record_url) {
-                    quickOpenBtn.style.display = 'inline-flex';
-                    if (quickOpenLabel)
-                        quickOpenLabel.textContent = 'Open Record ' + match.record;
-                    quickOpenBtn.title = 'Open Record ' + match.record + ' (' + match.fieldLabel + ': ' + match.matchedValue + ') [Shift + Enter]';
+                    quickOpenBanner.style.display = 'flex';
+                    if (qoIdEl)
+                        qoIdEl.textContent = match.record;
+                    if (qoLabelEl) {
+                        if (match.customLabel)
+                            qoLabelEl.textContent = '— ' + match.customLabel;
+                        else
+                            qoLabelEl.textContent = '';
+                    }
+                    if (qoReasonEl) {
+                        if (!match.isPk)
+                            qoReasonEl.textContent = '(' + match.fieldLabel + ': ' + match.matchedValue + ')';
+                        else
+                            qoReasonEl.textContent = '';
+                    }
                 } else {
-                    quickOpenBtn.style.display = 'none';
+                    quickOpenBanner.style.display = 'none';
                 }
             }
             return match;
+        };
+
+        const scheduleIdleTask = (callback, delayMs) => {
+            if (typeof window.requestIdleCallback === 'function') {
+                setTimeout(() => {
+                    window.requestIdleCallback(() => callback(), { timeout: 3000 });
+                }, delayMs || 800);
+            } else {
+                setTimeout(callback, delayMs || 1000);
+            }
+        };
+
+        const startLocatorSync = async () => {
+            if (locatorSyncInProgress)
+                return;
+            locatorSyncInProgress = true;
+
+            try {
+                const cached = getSessionLocators();
+                let needsFullSync = true;
+                let currentMaxPk = 0;
+
+                if (cached && cached.locators) {
+                    locatorMap = cached.locators;
+                    currentMaxPk = cached.maxPk || 0;
+                    needsFullSync = false;
+                    if (searchInput && searchInput.value.trim())
+                        updateAutoMatch(searchInput.value.trim(), currentRecords);
+                }
+
+                if (!needsFullSync && autoIncSet) {
+                    const res = await module.ajax('fetch_locators', {
+                        since_max_pk: currentMaxPk,
+                        limit: 5000
+                    });
+                    if (res && res.locators && Object.keys(res.locators).length > 0) {
+                        Object.assign(locatorMap, res.locators);
+                        const updatedMax = (res.max_pk && res.max_pk > currentMaxPk) ? res.max_pk : currentMaxPk;
+                        setSessionLocators({
+                            maxPk: updatedMax,
+                            locators: locatorMap
+                        });
+                        if (searchInput && searchInput.value.trim())
+                            updateAutoMatch(searchInput.value.trim(), currentRecords);
+                    }
+                } else if (needsFullSync) {
+                    let offset = 0;
+                    let hasMore = true;
+                    const tempLocators = {};
+                    let runningMaxPk = 0;
+
+                    while (hasMore) {
+                        if (prefetchInFlight) {
+                            await new Promise((r) => setTimeout(r, 1200));
+                            continue;
+                        }
+
+                        const res = await module.ajax('fetch_locators', {
+                            offset: offset,
+                            limit: 5000
+                        });
+
+                        if (!res || !res.locators)
+                            break;
+
+                        Object.assign(tempLocators, res.locators);
+                        Object.assign(locatorMap, res.locators);
+
+                        if (searchInput && searchInput.value.trim())
+                            updateAutoMatch(searchInput.value.trim(), currentRecords);
+
+                        if (res.max_pk && res.max_pk > runningMaxPk)
+                            runningMaxPk = res.max_pk;
+
+                        hasMore = Boolean(res.has_more);
+                        offset = res.next_offset || (offset + (res.count || 0));
+
+                        if (hasMore)
+                            await new Promise((r) => setTimeout(r, 300));
+                    }
+
+                    setSessionLocators({
+                        maxPk: runningMaxPk,
+                        locators: tempLocators
+                    });
+                    locatorMap = tempLocators;
+                }
+            } catch (err) {
+                // Silently fallback to runtime fast search
+            } finally {
+                locatorSyncInProgress = false;
+            }
         };
 
         const getAllHighlightTerms = () => {
@@ -1330,12 +1522,16 @@
             });
 
             searchInput.addEventListener('input', () => {
+                const val = searchInput.value.trim();
                 if (activeChips.length > 0 && baseRecords.length > 0) {
                     applyClientFilters();
                 } else if (activeChips.length === 0) {
-                    if (searchInput.value.trim() === '')
-                        updateAutoMatch('', []);
-                    scheduleSpeculativePrefetch();
+                    updateAutoMatch(val, currentRecords);
+                    if (val === '') {
+                        // cleared
+                    } else {
+                        scheduleSpeculativePrefetch();
+                    }
                 }
             });
 
@@ -1349,7 +1545,7 @@
                     if (currentExactMatch && currentExactMatch.record_url) {
                         saveRecentRecord({
                             record: currentExactMatch.record,
-                            custom_label: currentExactMatch.matchedValue,
+                            custom_label: currentExactMatch.customLabel || currentExactMatch.matchedValue,
                             record_url: currentExactMatch.record_url
                         });
                         window.location.href = currentExactMatch.record_url;
@@ -1364,7 +1560,7 @@
                             if (match && match.record_url) {
                                 saveRecentRecord({
                                     record: match.record,
-                                    custom_label: match.matchedValue,
+                                    custom_label: match.customLabel || match.matchedValue,
                                     record_url: match.record_url
                                 });
                                 window.location.href = match.record_url;
@@ -1382,7 +1578,7 @@
                     if (currentExactMatch && currentExactMatch.record_url) {
                         saveRecentRecord({
                             record: currentExactMatch.record,
-                            custom_label: currentExactMatch.matchedValue,
+                            custom_label: currentExactMatch.customLabel || currentExactMatch.matchedValue,
                             record_url: currentExactMatch.record_url
                         });
                         window.location.href = currentExactMatch.record_url;
@@ -1501,5 +1697,10 @@
 
         if (!tryRestoreSearchStateFromSession())
             renderRecentRecords();
+
+        if (searchInput && searchInput.value.trim() && Object.keys(locatorMap).length > 0)
+            updateAutoMatch(searchInput.value.trim(), currentRecords);
+
+        scheduleIdleTask(startLocatorSync, 800);
     });
 })();

@@ -212,6 +212,8 @@ class BetterSearch extends AbstractExternalModule
             return $this->handleSearch($project_id, $payload, 'deep');
         if ($action === 'stage_dag_assignment')
             return $this->handleStageDagAssignment($project_id, $payload);
+        if ($action === 'fetch_locators')
+            return $this->handleFetchLocators($project_id, $payload);
 
         return ['error' => 'Unsupported action.'];
     }
@@ -1764,6 +1766,199 @@ class BetterSearch extends AbstractExternalModule
             . '<img src="' . APP_PATH_IMAGES . $icon . '" alt="" style="vertical-align:middle;position:relative;top:-2px;margin-right:2px;"> '
             . $text
             . '</div>';
+    }
+
+    /**
+     * Handle background chunked locator fetching.
+     * Returns a flat KV mapping: { "locator_lowercase": [ "pk", "custom_label" ] }
+     */
+    public function handleFetchLocators($project_id, array $payload): array
+    {
+        $context = $this->getProjectContext($project_id, false);
+        $fieldConfig = $this->getFieldConfiguration($project_id, $context, false);
+        $userDagId = $context['user_dag_id'] ?? null;
+        $pk = (string) ($context['pk'] ?? 'record_id');
+        $autoIncSet = !empty($context['auto_inc_set']);
+        $uniqueFields = $fieldConfig['unique_fields'] ?? [$pk];
+
+        $limit = isset($payload['limit']) ? max(10, min(10000, (int) $payload['limit'])) : 5000;
+        $offset = isset($payload['offset']) ? max(0, (int) $payload['offset']) : 0;
+        $sinceMaxPk = isset($payload['since_max_pk']) && is_numeric($payload['since_max_pk']) ? (float) $payload['since_max_pk'] : null;
+
+        $recordsInChunk = [];
+        $hasMore = false;
+        $maxPkInChunk = null;
+
+        $hasRecordList = true;
+        $qCheck = $this->query("SELECT 1 FROM redcap_record_list WHERE project_id = ? LIMIT 1", [$project_id]);
+        if (!$qCheck->fetch_assoc())
+            $hasRecordList = false;
+
+        if ($hasRecordList) {
+            $qList = $this->createQuery();
+            if ($autoIncSet && $sinceMaxPk !== null) {
+                if (!empty($userDagId)) {
+                    $qList->add(
+                        "SELECT DISTINCT record FROM redcap_record_list WHERE project_id = ? AND dag_id = ? AND (record + 0) > ? ORDER BY (record + 0) ASC LIMIT ?",
+                        [$project_id, (int) $userDagId, $sinceMaxPk, $limit + 1]
+                    );
+                } else {
+                    $qList->add(
+                        "SELECT DISTINCT record FROM redcap_record_list WHERE project_id = ? AND (record + 0) > ? ORDER BY (record + 0) ASC LIMIT ?",
+                        [$project_id, $sinceMaxPk, $limit + 1]
+                    );
+                }
+            } else {
+                if (!empty($userDagId)) {
+                    $qList->add(
+                        "SELECT DISTINCT record, sort FROM redcap_record_list WHERE project_id = ? AND dag_id = ? ORDER BY sort ASC, record ASC LIMIT ? OFFSET ?",
+                        [$project_id, (int) $userDagId, $limit + 1, $offset]
+                    );
+                } else {
+                    $qList->add(
+                        "SELECT DISTINCT record, sort FROM redcap_record_list WHERE project_id = ? ORDER BY sort ASC, record ASC LIMIT ? OFFSET ?",
+                        [$project_id, $limit + 1, $offset]
+                    );
+                }
+            }
+            $res = $qList->execute();
+            while ($row = $res->fetch_assoc()) {
+                $recordsInChunk[] = (string) $row['record'];
+            }
+        } else {
+            $dataTable = $this->getDataTable($project_id);
+            $qList = $this->createQuery();
+            if ($autoIncSet && $sinceMaxPk !== null) {
+                $qList->add(
+                    "SELECT DISTINCT record FROM $dataTable WHERE project_id = ? AND (record + 0) > ? ORDER BY (record + 0) ASC LIMIT ?",
+                    [$project_id, $sinceMaxPk, $limit + 1]
+                );
+            } else {
+                $qList->add(
+                    "SELECT DISTINCT record FROM $dataTable WHERE project_id = ? ORDER BY record ASC LIMIT ? OFFSET ?",
+                    [$project_id, $limit + 1, $offset]
+                );
+            }
+            $res = $qList->execute();
+            while ($row = $res->fetch_assoc()) {
+                $recordsInChunk[] = (string) $row['record'];
+            }
+        }
+
+        if (count($recordsInChunk) > $limit) {
+            $hasMore = true;
+            array_pop($recordsInChunk);
+        }
+
+        if (empty($recordsInChunk)) {
+            return [
+                'locators' => (object) [],
+                'count' => 0,
+                'has_more' => false,
+                'next_offset' => $offset,
+                'max_pk' => $sinceMaxPk ?? 0,
+                'auto_inc' => $autoIncSet,
+            ];
+        }
+
+        if ($autoIncSet) {
+            foreach ($recordsInChunk as $r) {
+                if (is_numeric($r)) {
+                    $num = (float) $r;
+                    if ($maxPkInChunk === null || $num > $maxPkInChunk)
+                        $maxPkInChunk = $num;
+                }
+            }
+        }
+
+        $dataTable = $this->getDataTable($project_id);
+        $secondaryValues = [];
+        $uniqueLookups = array_values(array_filter($uniqueFields, function ($f) use ($pk) {
+            return $f !== $pk;
+        }));
+
+        if (!empty($uniqueLookups)) {
+            $qSec = $this->createQuery();
+            $qSec->add("SELECT record, field_name, value FROM $dataTable WHERE project_id = ? AND", [$project_id]);
+            $qSec->addInClause('record', $recordsInChunk);
+            $qSec->add("AND");
+            $qSec->addInClause('field_name', $uniqueLookups);
+            $resSec = $qSec->execute();
+            while ($sRow = $resSec->fetch_assoc()) {
+                $r = (string) $sRow['record'];
+                $val = trim((string) $sRow['value']);
+                if ($val !== '') {
+                    $secondaryValues[$r][] = $val;
+                }
+            }
+        }
+
+        $recordLabels = [];
+        $customLabel = $context['custom_record_label'] ?? '';
+        $customLabelFields = $fieldConfig['custom_label_fields'] ?? [];
+        if (!empty($customLabel) && !empty($customLabelFields) && empty($fieldConfig['needs_complex_piping'])) {
+            $qLabels = $this->createQuery();
+            $qLabels->add("SELECT record, field_name, value FROM $dataTable WHERE project_id = ? AND", [$project_id]);
+            $qLabels->addInClause('record', $recordsInChunk);
+            $qLabels->add("AND");
+            $qLabels->addInClause('field_name', $customLabelFields);
+            $resLabels = $qLabels->execute();
+            $recFieldValues = [];
+            while ($lRow = $resLabels->fetch_assoc()) {
+                $rec = (string) $lRow['record'];
+                $recFieldValues[$rec][(string) $lRow['field_name']] = (string) $lRow['value'];
+            }
+            foreach ($recordsInChunk as $rId) {
+                if (isset($recFieldValues[$rId])) {
+                    $search = [];
+                    $replace = [];
+                    foreach ($customLabelFields as $fname) {
+                        $search[] = '[' . $fname . ']';
+                        $replace[] = $recFieldValues[$rId][$fname] ?? '';
+                    }
+                    $lbl = trim(strip_tags((string) str_ireplace($search, $replace, $customLabel)));
+                    $lbl = trim(preg_replace('/\(\s*\)|\[\s*\]|^[\s,\-:]+|[\s,\-:]+$/', '', $lbl));
+                    if ($lbl !== '') {
+                        $recordLabels[$rId] = $lbl;
+                    }
+                }
+            }
+        }
+
+        $kv = [];
+        foreach ($recordsInChunk as $recId) {
+            $label = $recordLabels[$recId] ?? '';
+            $pkKey = strtolower($recId);
+            $kv[$pkKey] = [$recId, $label];
+
+            if (isset($secondaryValues[$recId])) {
+                foreach ($secondaryValues[$recId] as $secVal) {
+                    $secKey = strtolower($secVal);
+                    if (isset($kv[$secKey])) {
+                        if ($kv[$secKey][0] !== $recId) {
+                            $kv[$secKey] = null;
+                        }
+                    } else {
+                        $kv[$secKey] = [$recId, $label];
+                    }
+                }
+            }
+        }
+
+        $cleanKv = [];
+        foreach ($kv as $k => $v) {
+            if ($v !== null)
+                $cleanKv[$k] = $v;
+        }
+
+        return [
+            'locators' => (object) $cleanKv,
+            'count' => count($recordsInChunk),
+            'has_more' => $hasMore,
+            'next_offset' => $offset + count($recordsInChunk),
+            'max_pk' => $maxPkInChunk ?? ($sinceMaxPk ?? 0),
+            'auto_inc' => $autoIncSet,
+        ];
     }
 
 
