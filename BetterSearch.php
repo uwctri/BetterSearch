@@ -52,8 +52,9 @@ class BetterSearch extends AbstractExternalModule
             $redirectUrl = $searchUrl;
             if (!empty($_GET['arm']) && is_numeric($_GET['arm']))
                 $redirectUrl .= '&arm=' . (int) $_GET['arm'];
-            if (!empty($_GET['msg']) && is_string($_GET['msg']))
-                $redirectUrl .= '&msg=' . urlencode($_GET['msg']);
+            $msg = $_GET['msg'] ?? '';
+            if (in_array($msg, ['delete', 'record_deleted', 'rename', 'add', 'cancel'], true))
+                $redirectUrl .= '&msg=' . $msg;
             header('Location: ' . $redirectUrl);
             $this->exitAfterHook();
             return;
@@ -167,7 +168,7 @@ class BetterSearch extends AbstractExternalModule
         if (!isset($context['dags'][$dagId]))
             return;
 
-        $dataTable = $this->resolveDataTable($project_id);
+        $dataTable = $this->getDataTable($project_id);
         $q = $this->createQuery();
         $q->add("SELECT 1 FROM $dataTable WHERE project_id = ? AND record = ? AND field_name = '__GROUPID__' LIMIT 1", [
             $project_id,
@@ -338,7 +339,7 @@ class BetterSearch extends AbstractExternalModule
                 $fName = (string) $cfgRow['field_name'];
                 $fVal = (string) $cfgRow['value'];
                 if ($fName === 'status_dev_mes' && $devMessage === '')
-                    $devMessage = $fVal;
+                    $devMessage = (string) $this->escape($fVal);
                 elseif (preg_match('/(?=.*dev)(?=.*record)/i', $fName) && is_numeric($fVal))
                     $devRecordLimit = (int) $fVal;
             }
@@ -810,7 +811,6 @@ class BetterSearch extends AbstractExternalModule
     {
         $userId = defined('USERID') ? (string) USERID : 'anon';
         $cacheKey = (int) $project_id . ':' . $userId;
-        $dataTable = $this->resolveDataTable($project_id);
 
         $cacheableContext = $context;
         unset($cacheableContext['project']);
@@ -819,14 +819,13 @@ class BetterSearch extends AbstractExternalModule
             'ts' => time(),
             'context' => $cacheableContext,
             'field_config' => $fieldConfig,
-            'data_table' => $dataTable,
         ];
 
-        return [$cacheableContext, $fieldConfig, $dataTable];
+        return [$cacheableContext, $fieldConfig];
     }
 
     /**
-     * Read cached project context, field configuration, and data table name from $_SESSION (5-minute TTL).
+     * Read cached project context and field configuration from $_SESSION (5-minute TTL).
      */
     protected function getCachedSearchEnvironment($project_id): array
     {
@@ -838,9 +837,9 @@ class BetterSearch extends AbstractExternalModule
         if (
             is_array($cached)
             && ($now - (int) ($cached['ts'] ?? 0)) < 300
-            && isset($cached['context'], $cached['field_config']['needs_complex_piping'], $cached['data_table'])
+            && isset($cached['context'], $cached['field_config']['needs_complex_piping'])
         )
-            return [$cached['context'], $cached['field_config'], $cached['data_table']];
+            return [$cached['context'], $cached['field_config']];
 
         $context = $this->getProjectContext($project_id, false);
         $fieldConfig = $this->getFieldConfiguration($project_id, $context, false);
@@ -871,7 +870,8 @@ class BetterSearch extends AbstractExternalModule
             $fuzzyThreshold = 100;
 
         $tMeta0 = microtime(true);
-        [$context, $fieldConfig, $dataTable] = $this->getCachedSearchEnvironment($project_id);
+        [$context, $fieldConfig] = $this->getCachedSearchEnvironment($project_id);
+        $dataTable = $this->getDataTable($project_id);
 
         $parsed = $this->parseSearchQuery($rawQuery, $fieldConfig);
         if ($fuzzyThreshold < 100)
@@ -947,6 +947,7 @@ class BetterSearch extends AbstractExternalModule
         ?array $armEventSet,
         array &$matchedHitsByRecord
     ) {
+        $dataTable = $this->getDataTable($project_id);
         $raw = $parsed['raw'];
         $fuzzyThreshold = (int) ($parsed['fuzzy_threshold'] ?? 100);
         $tier1FieldNames = $querySets['tier1_fields'];
@@ -992,6 +993,7 @@ class BetterSearch extends AbstractExternalModule
         array $parsed,
         array &$matchedHitsByRecord
     ) {
+        $dataTable = $this->getDataTable($project_id);
         $selectSums = [];
         $sumParams = [];
         $orTokenParts = [];
@@ -1075,6 +1077,7 @@ class BetterSearch extends AbstractExternalModule
         ?array $armEventSet,
         array &$matchedHitsByRecord
     ) {
+        $dataTable = $this->getDataTable($project_id);
         $tier2Fields = $querySets['tier2_fields'];
         if (empty($tier2Fields))
             return;
@@ -1345,6 +1348,7 @@ class BetterSearch extends AbstractExternalModule
         $selectedArm = null,
         $dagFilter = ''
     ) {
+        $dataTable = $this->getDataTable($project_id);
         if (empty($matchedHitsByRecord))
             return [];
 
@@ -1643,6 +1647,7 @@ class BetterSearch extends AbstractExternalModule
      */
     protected function getDagRecordSet($project_id, $dagId, $dataTable)
     {
+        $dataTable = $this->getDataTable($project_id);
         $allowed = [];
         $resList = $this->query(
             "SELECT record FROM redcap_record_list WHERE project_id = ? AND dag_id = ?",
@@ -1738,7 +1743,7 @@ class BetterSearch extends AbstractExternalModule
             $text .= " You are currently using $total of $limit test records allowed while in Development status.";
 
         if (!empty($context['status_dev_mes']))
-            $text .= '<br><br>' . $context['status_dev_mes'];
+            $text .= '<br><br>' . $this->escape((string) $context['status_dev_mes']);
 
         echo '<div class="' . $boxClass . '" style="margin:10px 0 14px;max-width:960px;">'
             . '<img src="' . APP_PATH_IMAGES . $icon . '" alt="" style="vertical-align:middle;position:relative;top:-2px;margin-right:2px;"> '
@@ -1746,17 +1751,12 @@ class BetterSearch extends AbstractExternalModule
             . '</div>';
     }
 
-    /**
-     * Resolve the project's sharded data table name (`redcap_data`, `redcap_data2`, etc.).
-     */
-    public function resolveDataTable($project_id)
-    {
-        $table = Records::getDataTable($project_id);
-        return preg_match('/^redcap_data\d*$/', $table) ? $table : 'redcap_data';
-    }
 
     /**
      * Clean HTML tags from REDCap field/form labels.
+     *
+     * @param mixed $label
+     * @return string
      */
     protected function cleanLabel($label)
     {

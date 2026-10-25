@@ -353,12 +353,16 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
 <?php
 $jsFieldMeta = [];
 foreach ($fieldConfig['field_meta'] as $fn => $fm)
-    $jsFieldMeta[$fn] = [$fm['label'], $fm['form_name'], $fm['form_label']];
+    $jsFieldMeta[(string) $fn] = [
+        $module->escape((string) $fm['label']),
+        $module->escape((string) $fm['form_name']),
+        $module->escape((string) $fm['form_label']),
+    ];
 
 $jsEvents = [];
 if ($context['longitudinal'])
     foreach ($context['events'] as $eId => $eInfo)
-        $jsEvents[$eId] = $eInfo['name'];
+        $jsEvents[(string) $eId] = $module->escape((string) $eInfo['name']);
 ?>
 <script>
     window.BetterSearchConfig = {
@@ -369,8 +373,8 @@ if ($context['longitudinal'])
         hasCustomLabel: <?= $hasCustomLabel ? 'true' : 'false' ?>,
         hasSecondaryPk: <?= $hasSecondaryPk ? 'true' : 'false' ?>,
         selectedArm: <?= (int) $selectedArm ?>,
-        fieldMeta: <?= json_encode($jsFieldMeta) ?>,
-        events: <?= json_encode($jsEvents) ?>
+        fieldMeta: <?= json_encode($module->escape($jsFieldMeta)) ?>,
+        events: <?= json_encode($module->escape($jsEvents)) ?>
     };
 </script>
 <script src="<?= htmlspecialchars($module->getUrl('index.js'), ENT_QUOTES, 'UTF-8') ?>"></script>
