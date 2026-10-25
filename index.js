@@ -73,10 +73,13 @@
             } catch (e) {}
         }
 
-        // Immediately load any locators cached for this active tab session
+        // Immediately load any locators from page seed data or active tab session
         const initialSessionData = getSessionLocators();
-        if (initialSessionData && initialSessionData.locators)
-            locatorMap = initialSessionData.locators;
+        locatorMap = Object.assign(
+            {},
+            cfg.seedLocators || {},
+            (initialSessionData && initialSessionData.locators) ? initialSessionData.locators : {}
+        );
 
         const uniqueFields = new Set(cfg.uniqueFields || [cfg.pkField]);
         const pkField = cfg.pkField || 'record_id';
@@ -1701,6 +1704,6 @@
         if (searchInput && searchInput.value.trim() && Object.keys(locatorMap).length > 0)
             updateAutoMatch(searchInput.value.trim(), currentRecords);
 
-        scheduleIdleTask(startLocatorSync, 800);
+        setTimeout(startLocatorSync, 50);
     });
 })();

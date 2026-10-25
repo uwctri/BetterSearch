@@ -56,6 +56,12 @@ foreach ($fieldConfig['base_tier1_fields'] as $fname => $reason) {
 
 $uniqueFields = $fieldConfig['unique_fields'] ?? [$context['pk']];
 
+$seedLocators = (object) [];
+if (($counts['total'] ?? 0) <= 1000) {
+    $seedRes = $module->handleFetchLocators($project_id, ['limit' => 1000]);
+    $seedLocators = $seedRes['locators'] ?? (object) [];
+}
+
 $remainingFieldCount = count($fieldConfig['all_searchable_fields']) - count($fieldConfig['base_tier1_fields']);
 if ($remainingFieldCount < 0)
     $remainingFieldCount = 0;
@@ -163,7 +169,12 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                         <input
                             type="text"
                             id="bs-search-input"
+                            name="bs_search_no_autocomplete"
                             class="bs-input-text"
+                            autocomplete="off"
+                            autocorrect="off"
+                            autocapitalize="off"
+                            spellcheck="false"
                             placeholder="Search by <?= htmlspecialchars($context['pk_label'], ENT_QUOTES, 'UTF-8') ?><?= $hasSecondaryPk ? ', ' . htmlspecialchars($context['secondary_pk_label'], ENT_QUOTES, 'UTF-8') : '' ?>, identifier, date, or any field value..."
                             autofocus>
                         <?php if ($canSelectDag): ?>
@@ -394,6 +405,7 @@ if ($context['longitudinal'])
         multipleArms: <?= $context['multiple_arms'] ? 'true' : 'false' ?>,
         userDagId: <?= (int) ($context['user_dag_id'] ?? 0) ?>,
         autoIncSet: <?= $context['auto_inc_set'] ? 'true' : 'false' ?>,
+        seedLocators: <?= json_encode($seedLocators) ?>,
         pkField: <?= json_encode((string) $context['pk']) ?>,
         pkLabel: <?= json_encode((string) $context['pk_label']) ?>,
         uniqueFields: <?= json_encode($uniqueFields) ?>,

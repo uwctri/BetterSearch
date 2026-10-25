@@ -13,7 +13,8 @@
     "auth-ajax-actions": [
         "search_fast",
         "search_deep",
-        "stage_dag_assignment"
+        "stage_dag_assignment",
+        "fetch_locators"
     ],
     "links": {
         "project": [
