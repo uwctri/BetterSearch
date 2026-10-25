@@ -209,6 +209,33 @@
     background: #660000;
 }
 
+.bs-btn-quick-open {
+    background: #0073e6;
+    color: #fff !important;
+    border: 1px solid #005bb5;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.bs-btn-quick-open:hover {
+    background: #005bb5;
+    color: #fff !important;
+}
+
+.bs-kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: inherit;
+    line-height: 1.2;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
 .bs-btn-add {
     background: #28a745;
     color: #fff !important;
@@ -414,6 +441,16 @@
     background: #e8e8e8;
     color: #444;
     border: 1px solid #d0d0d0;
+}
+
+.bs-pill-exact {
+    background: #e6f4ea;
+    color: #137333;
+    border: 1px solid #ceead6;
+}
+
+.bs-exact-match-row {
+    background-color: #f7fbf8 !important;
 }
 
 .bs-table-scroll {

@@ -29,9 +29,15 @@
         const searchForm = document.getElementById('bs-search-form');
         const searchInput = document.getElementById('bs-search-input');
         const searchBtnLabel = document.getElementById('bs-search-btn-label');
+        const quickOpenBtn = document.getElementById('bs-quick-open-btn');
+        const quickOpenLabel = document.getElementById('bs-quick-open-label');
         const chipBar = document.getElementById('bs-chip-bar');
         const recentRowEl = document.getElementById('bs-recent-records-row');
         const defaultPlaceholder = searchInput ? (searchInput.getAttribute('placeholder') || '') : '';
+        const fastTextNumericFields = new Set(cfg.fastTextNumericFields || []);
+        const pkField = cfg.pkField || 'record_id';
+        const pkLabel = cfg.pkLabel || 'Record ID';
+        let currentExactMatch = null;
 
         const dagFilterSelect = document.getElementById('bs-dag-filter');
         const enableDeepCheckbox = document.getElementById('bs-enable-deep');
@@ -131,6 +137,13 @@
 
             prefetchInFlight = true;
             fetchFastSearch(val, selectedArm, dagFilter, fuzzyThreshold)
+                .then((res) => {
+                    if (!searchInput)
+                        return;
+                    const latestVal = searchInput.value.trim();
+                    if (latestVal.toLowerCase() === val.toLowerCase() && res && res.records)
+                        updateAutoMatch(latestVal, res.records);
+                })
                 .catch(() => {})
                 .finally(() => {
                     prefetchInFlight = false;
@@ -165,6 +178,106 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+
+        const formatElapsed = (ms) => {
+            const num = Number(ms) || 0;
+            return num >= 1000 ? (num / 1000).toFixed(2) + 's' : num + ' ms';
+        };
+
+        const findExactAutoMatch = (query, records) => {
+            const cleanQ = (query || '').trim().toLowerCase();
+            if (!cleanQ || !records || records.length === 0)
+                return null;
+
+            const qDigits = cleanQ.replace(/\D+/g, '');
+            const isPotentialPhone = qDigits.length >= 7 && qDigits.length <= 15;
+
+            let exactPkMatch = null;
+            let exactFieldMatch = null;
+
+            for (let i = 0; i < records.length; i++) {
+                const item = records[i];
+                const rec = item.rec || item;
+                const recId = String(rec.record || '').trim().toLowerCase();
+
+                if (recId === cleanQ) {
+                    exactPkMatch = {
+                        record: rec.record,
+                        record_url: rec.record_url,
+                        fieldLabel: pkLabel,
+                        matchedValue: rec.record,
+                        isPk: true
+                    };
+                    break;
+                }
+
+                if (rec.secondary_pk_value && String(rec.secondary_pk_value).trim().toLowerCase() === cleanQ) {
+                    if (!exactFieldMatch) {
+                        exactFieldMatch = {
+                            record: rec.record,
+                            record_url: rec.record_url,
+                            fieldLabel: 'Secondary ID',
+                            matchedValue: rec.secondary_pk_value,
+                            isPk: false
+                        };
+                    }
+                }
+
+                const matches = rec.matches || [];
+                for (let m = 0; m < matches.length; m++) {
+                    const hit = matches[m];
+                    const isTuple = Array.isArray(hit);
+                    const fname = isTuple ? hit[0] : hit.field_name;
+                    if (!fastTextNumericFields.has(fname))
+                        continue;
+
+                    const rawVal = String(isTuple ? (hit[1] || '') : (hit.raw_value || '')).trim().toLowerCase();
+                    const val = String(isTuple ? (hit[2] || '') : (hit.value || '')).trim().toLowerCase();
+
+                    let matched = (rawVal === cleanQ || val === cleanQ);
+                    if (!matched && isPotentialPhone) {
+                        const rawDigits = rawVal.replace(/\D+/g, '');
+                        const valDigits = val.replace(/\D+/g, '');
+                        if (rawDigits === qDigits || valDigits === qDigits)
+                            matched = true;
+                    }
+
+                    if (matched) {
+                        if (!exactFieldMatch) {
+                            const fMeta = (fieldMetaMap && fieldMetaMap[fname]) ? fieldMetaMap[fname] : [fname];
+                            exactFieldMatch = {
+                                record: rec.record,
+                                record_url: rec.record_url,
+                                fieldLabel: fMeta[0] || fname,
+                                matchedValue: isTuple ? hit[2] : hit.value,
+                                isPk: false
+                            };
+                        }
+                        break;
+                    }
+                }
+            }
+
+            return exactPkMatch || exactFieldMatch;
+        };
+
+        const updateAutoMatch = (query, candidateRecords) => {
+            const recs = candidateRecords || currentRecords || [];
+            const match = findExactAutoMatch(query, recs);
+            currentExactMatch = match;
+
+            if (quickOpenBtn) {
+                if (match && match.record_url) {
+                    quickOpenBtn.style.display = 'inline-flex';
+                    if (quickOpenLabel)
+                        quickOpenLabel.textContent = 'Open Record ' + match.record;
+                    quickOpenBtn.title = 'Open Record ' + match.record + ' (' + match.fieldLabel + ': ' + match.matchedValue + ') [Shift + Enter]';
+                } else {
+                    quickOpenBtn.style.display = 'none';
+                }
+            }
+            return match;
+        };
 
         const getAllHighlightTerms = () => {
             const terms = activeChips.slice();
@@ -462,6 +575,16 @@
                 currentRecords = filtered;
             }
 
+            const qToTest = activeChips.length > 0 ? activeChips[0] : (searchInput ? searchInput.value.trim() : '');
+            const autoMatch = updateAutoMatch(qToTest, currentRecords);
+            if (autoMatch) {
+                const idx = currentRecords.findIndex((item) => String(item.rec.record) === String(autoMatch.record));
+                if (idx > 0) {
+                    const [exactItem] = currentRecords.splice(idx, 1);
+                    currentRecords.unshift(exactItem);
+                }
+            }
+
             currentPage = 1;
             activeRowIndex = -1;
 
@@ -663,13 +786,21 @@
             const tr = document.createElement('tr');
             tr.setAttribute('data-record-url', rec.record_url);
 
+            const isExact = currentExactMatch && String(rec.record) === String(currentExactMatch.record);
+            if (isExact)
+                tr.classList.add('bs-exact-match-row');
+
             const tdId = document.createElement('td');
+            const exactBadge = isExact
+                ? '<span class="bs-pill bs-pill-exact" title="Exact match on ' + escapeHtml(currentExactMatch.fieldLabel) + ': ' + escapeHtml(currentExactMatch.matchedValue) + '"><i class="fas fa-bullseye"></i> Exact Match</span>'
+                : '';
+
             const tierBadge = tierNum === 1
                 ? '<span class="bs-tier-badge bs-tier-fast" title="Matched in fast search">Fast</span>'
                 : '<span class="bs-tier-badge bs-tier-deep" title="Matched in deep search">Deep</span>';
 
             let idHtml = '<a class="bs-rec-id" href="' + escapeHtml(rec.record_url) + '">'
-                + highlightMatch(rec.record, queryStr) + '</a>' + tierBadge;
+                + highlightMatch(rec.record, queryStr) + '</a>' + exactBadge + tierBadge;
 
             let metaTags = '';
             if (rec.dag_name)
@@ -1103,7 +1234,7 @@
 
                 let badgesHtml = '<span class="bs-pill bs-pill-fast"><i class="fas fa-bolt"></i> Fast: '
                     + tier1Recs.length + ' ' + (tier1Recs.length === 1 ? 'match' : 'matches')
-                    + ' (' + elapsedFast + ' ms)</span>';
+                    + ' (' + formatElapsed(elapsedFast) + ')</span>';
 
                 for (let b = 0; b < detected.length; b++)
                     badgesHtml += '<span class="bs-pill bs-pill-detected">' + escapeHtml(detected[b]) + '</span>';
@@ -1151,7 +1282,7 @@
                         renderEmptyState('No matching records found across any project fields.');
 
                     deepStatusEl.innerHTML = '<span class="bs-pill bs-pill-done">'
-                        + 'Deep: +' + tier2Recs.length + ' (' + elapsedDeep + ' ms)</span>';
+                        + 'Deep: +' + tier2Recs.length + ' (' + formatElapsed(elapsedDeep) + ')</span>';
                     saveSearchStateToSession(false);
                 }).catch(() => {
                     if (myToken !== activeSearchToken)
@@ -1192,18 +1323,65 @@
             });
 
             searchInput.addEventListener('input', () => {
-                if (activeChips.length > 0 && baseRecords.length > 0)
+                if (activeChips.length > 0 && baseRecords.length > 0) {
                     applyClientFilters();
-                else if (activeChips.length === 0)
+                } else if (activeChips.length === 0) {
+                    if (searchInput.value.trim() === '')
+                        updateAutoMatch('', []);
                     scheduleSpeculativePrefetch();
+                }
             });
 
             searchInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Backspace' && searchInput.value === '' && activeChips.length > 0) {
                     e.preventDefault();
                     removeChipAt(activeChips.length - 1);
+                } else if (e.key === 'Enter' && e.shiftKey) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (currentExactMatch && currentExactMatch.record_url) {
+                        saveRecentRecord({
+                            record: currentExactMatch.record,
+                            custom_label: currentExactMatch.matchedValue,
+                            record_url: currentExactMatch.record_url
+                        });
+                        window.location.href = currentExactMatch.record_url;
+                        return;
+                    }
+                    const q = searchInput.value.trim();
+                    if (!q)
+                        return;
+                    fetchFastSearch(q, selectedArm, dagFilterSelect ? dagFilterSelect.value : '', fuzzyThreshold).then((res) => {
+                        if (res && res.records) {
+                            const match = findExactAutoMatch(q, res.records);
+                            if (match && match.record_url) {
+                                saveRecentRecord({
+                                    record: match.record,
+                                    custom_label: match.matchedValue,
+                                    record_url: match.record_url
+                                });
+                                window.location.href = match.record_url;
+                                return;
+                            }
+                        }
+                        executeSearch(true);
+                    });
                 }
             });
+
+            if (quickOpenBtn) {
+                quickOpenBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    if (currentExactMatch && currentExactMatch.record_url) {
+                        saveRecentRecord({
+                            record: currentExactMatch.record,
+                            custom_label: currentExactMatch.matchedValue,
+                            record_url: currentExactMatch.record_url
+                        });
+                        window.location.href = currentExactMatch.record_url;
+                    }
+                });
+            }
         }
 
         if (dagFilterSelect)

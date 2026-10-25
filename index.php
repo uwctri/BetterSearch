@@ -45,12 +45,33 @@ $nativeRecordHomeUrl = APP_PATH_WEBROOT . "DataEntry/record_home.php?pid={$proje
     . ($context['multiple_arms'] ? "&arm={$selectedArm}" : "");
 
 $tier1Summary = [];
-foreach ($fieldConfig['base_tier1_fields'] as $fname => $reason)
+$fastTextNumericFields = [];
+foreach ($fieldConfig['base_tier1_fields'] as $fname => $reason) {
+    $meta = $fieldConfig['field_meta'][$fname] ?? [];
+    $eType = $meta['element_type'] ?? '';
+    $vType = $meta['validation_type'] ?? '';
+
     $tier1Summary[] = [
         'name' => $fname,
-        'label' => $fieldConfig['field_meta'][$fname]['label'] ?? $fname,
+        'label' => $meta['label'] ?? $fname,
         'reason' => $reason,
     ];
+
+    if ($fname === $context['pk']) {
+        $fastTextNumericFields[] = $fname;
+        continue;
+    }
+
+    if ($eType === 'text') {
+        if (strpos($vType, 'date') === 0 || $vType === 'email')
+            continue;
+        $fastTextNumericFields[] = $fname;
+    }
+}
+
+foreach ($fieldConfig['phone_fields'] as $pf)
+    $fastTextNumericFields[] = $pf;
+$fastTextNumericFields = array_values(array_unique($fastTextNumericFields));
 
 $remainingFieldCount = count($fieldConfig['all_searchable_fields']) - count($fieldConfig['base_tier1_fields']);
 if ($remainingFieldCount < 0)
@@ -171,6 +192,9 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                 <?php endforeach; ?>
                             </select>
                         <?php endif; ?>
+                        <button type="button" id="bs-quick-open-btn" class="bs-btn bs-btn-quick-open" style="display:none;" title="Open record immediately (Shift + Enter)">
+                            <i class="fas fa-external-link-alt"></i> <span id="bs-quick-open-label">Open Record</span> <kbd class="bs-kbd">Shift ↵</kbd>
+                        </button>
                         <button type="submit" id="bs-search-btn" class="bs-btn bs-btn-search">
                             <i class="fas fa-search"></i> <span id="bs-search-btn-label">Search</span>
                         </button>
@@ -373,6 +397,9 @@ if ($context['longitudinal'])
         hasCustomLabel: <?= $hasCustomLabel ? 'true' : 'false' ?>,
         hasSecondaryPk: <?= $hasSecondaryPk ? 'true' : 'false' ?>,
         selectedArm: <?= (int) $selectedArm ?>,
+        pkField: <?= json_encode((string) $context['pk']) ?>,
+        pkLabel: <?= json_encode((string) $context['pk_label']) ?>,
+        fastTextNumericFields: <?= json_encode($fastTextNumericFields) ?>,
         fieldMeta: <?= json_encode($module->escape($jsFieldMeta)) ?>,
         events: <?= json_encode($module->escape($jsEvents)) ?>
     };
