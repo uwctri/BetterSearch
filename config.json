@@ -41,6 +41,12 @@
             "name": "<b>Additional Fast Search Field</b><br>Optional fields to always include in the fast search query",
             "type": "field-list",
             "repeatable": true
+        },
+        {
+            "key": "additional_unique_fields",
+            "name": "<b>Additional Unique Identifier Fields</b><br>Optional fields (e.g. MRN, barcode, study ID) that uniquely identify records for instant opening",
+            "type": "field-list",
+            "repeatable": true
         }
     ]
 }

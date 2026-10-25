@@ -34,7 +34,7 @@
         const chipBar = document.getElementById('bs-chip-bar');
         const recentRowEl = document.getElementById('bs-recent-records-row');
         const defaultPlaceholder = searchInput ? (searchInput.getAttribute('placeholder') || '') : '';
-        const fastTextNumericFields = new Set(cfg.fastTextNumericFields || []);
+        const uniqueFields = new Set(cfg.uniqueFields || [cfg.pkField]);
         const pkField = cfg.pkField || 'record_id';
         const pkLabel = cfg.pkLabel || 'Record ID';
         let currentExactMatch = null;
@@ -189,76 +189,83 @@
             if (!cleanQ || !records || records.length === 0)
                 return null;
 
-            const qDigits = cleanQ.replace(/\D+/g, '');
-            const isPotentialPhone = qDigits.length >= 7 && qDigits.length <= 15;
-
-            let exactPkMatch = null;
-            let exactFieldMatch = null;
-
+            // 1. Direct match on Record ID (Primary Key)
+            const pkMatches = [];
             for (let i = 0; i < records.length; i++) {
                 const item = records[i];
                 const rec = item.rec || item;
                 const recId = String(rec.record || '').trim().toLowerCase();
-
                 if (recId === cleanQ) {
-                    exactPkMatch = {
+                    pkMatches.push({
                         record: rec.record,
                         record_url: rec.record_url,
                         fieldLabel: pkLabel,
                         matchedValue: rec.record,
                         isPk: true
-                    };
-                    break;
+                    });
                 }
+            }
+            if (pkMatches.length === 1)
+                return pkMatches[0];
+            if (pkMatches.length > 1)
+                return null; // Ambiguous Record ID matches
+
+            // 2. Exact match on Secondary Unique Field or configured unique identifier fields
+            const fieldMatches = [];
+            const seenRecIds = new Set();
+
+            for (let i = 0; i < records.length; i++) {
+                const item = records[i];
+                const rec = item.rec || item;
+                const recId = String(rec.record || '').trim();
+
+                let recordMatched = null;
 
                 if (rec.secondary_pk_value && String(rec.secondary_pk_value).trim().toLowerCase() === cleanQ) {
-                    if (!exactFieldMatch) {
-                        exactFieldMatch = {
-                            record: rec.record,
-                            record_url: rec.record_url,
-                            fieldLabel: 'Secondary ID',
-                            matchedValue: rec.secondary_pk_value,
-                            isPk: false
-                        };
-                    }
+                    recordMatched = {
+                        record: rec.record,
+                        record_url: rec.record_url,
+                        fieldLabel: 'Secondary ID',
+                        matchedValue: rec.secondary_pk_value,
+                        isPk: false
+                    };
                 }
 
-                const matches = rec.matches || [];
-                for (let m = 0; m < matches.length; m++) {
-                    const hit = matches[m];
-                    const isTuple = Array.isArray(hit);
-                    const fname = isTuple ? hit[0] : hit.field_name;
-                    if (!fastTextNumericFields.has(fname))
-                        continue;
+                if (!recordMatched) {
+                    const matches = rec.matches || [];
+                    for (let m = 0; m < matches.length; m++) {
+                        const hit = matches[m];
+                        const isTuple = Array.isArray(hit);
+                        const fname = isTuple ? hit[0] : hit.field_name;
+                        if (!uniqueFields.has(fname))
+                            continue;
 
-                    const rawVal = String(isTuple ? (hit[1] || '') : (hit.raw_value || '')).trim().toLowerCase();
-                    const val = String(isTuple ? (hit[2] || '') : (hit.value || '')).trim().toLowerCase();
+                        const rawVal = String(isTuple ? (hit[1] || '') : (hit.raw_value || '')).trim().toLowerCase();
+                        const val = String(isTuple ? (hit[2] || '') : (hit.value || '')).trim().toLowerCase();
 
-                    let matched = (rawVal === cleanQ || val === cleanQ);
-                    if (!matched && isPotentialPhone) {
-                        const rawDigits = rawVal.replace(/\D+/g, '');
-                        const valDigits = val.replace(/\D+/g, '');
-                        if (rawDigits === qDigits || valDigits === qDigits)
-                            matched = true;
-                    }
-
-                    if (matched) {
-                        if (!exactFieldMatch) {
+                        if (rawVal === cleanQ || val === cleanQ) {
                             const fMeta = (fieldMetaMap && fieldMetaMap[fname]) ? fieldMetaMap[fname] : [fname];
-                            exactFieldMatch = {
+                            recordMatched = {
                                 record: rec.record,
                                 record_url: rec.record_url,
                                 fieldLabel: fMeta[0] || fname,
                                 matchedValue: isTuple ? hit[2] : hit.value,
                                 isPk: false
                             };
+                            break;
                         }
-                        break;
                     }
+                }
+
+                if (recordMatched && !seenRecIds.has(recId)) {
+                    seenRecIds.add(recId);
+                    fieldMatches.push(recordMatched);
+                    if (fieldMatches.length > 1)
+                        return null; // More than 1 record matches -> ambiguous
                 }
             }
 
-            return exactPkMatch || exactFieldMatch;
+            return fieldMatches.length === 1 ? fieldMatches[0] : null;
         };
 
         const updateAutoMatch = (query, candidateRecords) => {

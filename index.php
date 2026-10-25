@@ -45,33 +45,16 @@ $nativeRecordHomeUrl = APP_PATH_WEBROOT . "DataEntry/record_home.php?pid={$proje
     . ($context['multiple_arms'] ? "&arm={$selectedArm}" : "");
 
 $tier1Summary = [];
-$fastTextNumericFields = [];
 foreach ($fieldConfig['base_tier1_fields'] as $fname => $reason) {
     $meta = $fieldConfig['field_meta'][$fname] ?? [];
-    $eType = $meta['element_type'] ?? '';
-    $vType = $meta['validation_type'] ?? '';
-
     $tier1Summary[] = [
         'name' => $fname,
         'label' => $meta['label'] ?? $fname,
         'reason' => $reason,
     ];
-
-    if ($fname === $context['pk']) {
-        $fastTextNumericFields[] = $fname;
-        continue;
-    }
-
-    if ($eType === 'text') {
-        if (strpos($vType, 'date') === 0 || $vType === 'email')
-            continue;
-        $fastTextNumericFields[] = $fname;
-    }
 }
 
-foreach ($fieldConfig['phone_fields'] as $pf)
-    $fastTextNumericFields[] = $pf;
-$fastTextNumericFields = array_values(array_unique($fastTextNumericFields));
+$uniqueFields = $fieldConfig['unique_fields'] ?? [$context['pk']];
 
 $remainingFieldCount = count($fieldConfig['all_searchable_fields']) - count($fieldConfig['base_tier1_fields']);
 if ($remainingFieldCount < 0)
@@ -399,7 +382,7 @@ if ($context['longitudinal'])
         selectedArm: <?= (int) $selectedArm ?>,
         pkField: <?= json_encode((string) $context['pk']) ?>,
         pkLabel: <?= json_encode((string) $context['pk_label']) ?>,
-        fastTextNumericFields: <?= json_encode($fastTextNumericFields) ?>,
+        uniqueFields: <?= json_encode($uniqueFields) ?>,
         fieldMeta: <?= json_encode($module->escape($jsFieldMeta)) ?>,
         events: <?= json_encode($module->escape($jsEvents)) ?>
     };

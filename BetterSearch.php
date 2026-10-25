@@ -469,6 +469,18 @@ class BetterSearch extends AbstractExternalModule
             $configuredFields = !empty($configuredFields) ? [$configuredFields] : [];
         $configuredFields = array_values(array_filter($configuredFields));
 
+        $configuredUnique = $this->getProjectSetting('additional_unique_fields', $project_id);
+        if (!is_array($configuredUnique))
+            $configuredUnique = !empty($configuredUnique) ? [$configuredUnique] : [];
+        $configuredUnique = array_values(array_filter($configuredUnique));
+
+        $uniqueFields = [$pk];
+        if (!empty($secondaryPk))
+            $uniqueFields[] = $secondaryPk;
+        foreach ($configuredUnique as $uf)
+            $uniqueFields[] = $uf;
+        $uniqueFields = array_values(array_unique($uniqueFields));
+
         $baseTier1Fields = [$pk => 'Primary Key'];
         $allSearchableFields = [];
         $dateFields = [];
@@ -522,13 +534,14 @@ class BetterSearch extends AbstractExternalModule
             if ($valType === 'email')
                 $emailFields[] = $fieldName;
 
-            $reason = $this->resolveBasePriorityReason($fieldName, $pk, $secondaryPk, $configuredFields, $customLabelFields, $isPhi);
+            $reason = $this->resolveBasePriorityReason($fieldName, $pk, $secondaryPk, $configuredFields, $configuredUnique, $customLabelFields, $isPhi);
             if ($reason !== null)
                 $baseTier1Fields[$fieldName] = $reason;
         }
 
         return [
             'base_tier1_fields' => $baseTier1Fields,
+            'unique_fields' => $uniqueFields,
             'all_searchable_fields' => $allSearchableFields,
             'custom_label_fields' => $customLabelFields,
             'needs_complex_piping' => $needsComplexPiping,
@@ -597,12 +610,14 @@ class BetterSearch extends AbstractExternalModule
     /**
      * Determine why a field belongs in the base Tier 1 set (independent of query type).
      */
-    protected function resolveBasePriorityReason($fieldName, $pk, $secondaryPk, array $configuredFields, array $customLabelFields, $isPhi)
+    protected function resolveBasePriorityReason($fieldName, $pk, $secondaryPk, array $configuredFields, array $configuredUnique, array $customLabelFields, $isPhi)
     {
         if ($fieldName === $pk)
             return 'Primary Key';
         if ($fieldName === $secondaryPk && !empty($secondaryPk))
             return 'Secondary Unique Field';
+        if (in_array($fieldName, $configuredUnique, true))
+            return 'Unique Identifier';
         if (in_array($fieldName, $configuredFields, true))
             return 'Configured Priority';
         if (in_array($fieldName, $customLabelFields, true))
