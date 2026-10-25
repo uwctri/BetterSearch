@@ -1,6 +1,6 @@
 {
     "name": "Better Search",
-    "description": "A drop in replacement for the default Add/Edit Records search box that allows for more advanced searching. This module also adds a new search box to the Data Entry page that allows for searching by record ID, instrument, and event.",
+    "description": "A high-speed, zero-config drop-in replacement for the REDCap Add/Edit Records search page featuring smart query parsing (dates, phones, emails, multi-word tokens, choice labels) and a two-tier progressive search engine.",
     "namespace": "UWMadison\\BetterSearch",
     "authors": [
         {
@@ -9,45 +9,36 @@
             "institution": "UW Madison - Center for Tobacco Research and Intervention"
         }
     ],
-    "framework-version": 12,
-    "compatibility": {
-        "redcap-version-min": "13.1.0"
-    },
+    "framework-version": 17,
+    "auth-ajax-actions": [
+        "search_fast",
+        "search_deep",
+        "stage_dag_assignment"
+    ],
     "links": {
         "project": [
             {
                 "name": "Better Search",
                 "icon": "fas fa-search",
                 "url": "index.php",
-                "show-header-and-footer": true,
-                "hidden": true
+                "show-header-and-footer": true
             }
         ]
     },
     "project-settings": [
         {
             "key": "text",
-            "name": "The below settings all pertain to the Add/Edit Records page.",
-            "type": "description"
+            "name": "Better Search requires zero configuration: it automatically prioritizes your Record ID, Secondary Unique Field, Custom Record Label fields, Identifier (PHI) fields, and fields matching the detected input type (Date, Phone, Email).",
+            "type": "descriptive"
         },
         {
-            "key": "hide_list",
-            "name": "<b>Hide Record List Dropdown</b>",
-            "type": "checkbox"
-        },
-        {
-            "key": "hide_search",
-            "name": "<b>Hide Default Data Search Box</b>",
-            "type": "checkbox"
-        },
-        {
-            "key": "hide_count",
-            "name": "<b>Hide Record List Dropdown when __ many records exist</b>",
+            "key": "replace_native_page",
+            "name": "<b>Replace Native Add/Edit Records Page</b><br>Redirects the standard Add/Edit Records landing page to Better Search",
             "type": "checkbox"
         },
         {
             "key": "field",
-            "name": "<b>Searchable Field</b>",
+            "name": "<b>Additional Fast Search Field</b><br>Optional fields to always include in the fast search query",
             "type": "field-list",
             "repeatable": true
         }
