@@ -52,6 +52,8 @@ class BetterSearch extends AbstractExternalModule
             $redirectUrl = $searchUrl;
             if (!empty($_GET['arm']) && is_numeric($_GET['arm']))
                 $redirectUrl .= '&arm=' . (int) $_GET['arm'];
+            if (!empty($_GET['msg']) && is_string($_GET['msg']))
+                $redirectUrl .= '&msg=' . urlencode($_GET['msg']);
             header('Location: ' . $redirectUrl);
             $this->exitAfterHook();
             return;
@@ -862,13 +864,29 @@ class BetterSearch extends AbstractExternalModule
 
         $selectedArm = !empty($payload['arm']) ? (int) $payload['arm'] : null;
         $dagFilter = trim((string) ($payload['dag_filter'] ?? ''));
+        $fuzzyThreshold = isset($payload['fuzzy_threshold']) ? (int) $payload['fuzzy_threshold'] : 100;
+        if ($fuzzyThreshold < 50)
+            $fuzzyThreshold = 50;
+        if ($fuzzyThreshold > 100)
+            $fuzzyThreshold = 100;
 
         $tMeta0 = microtime(true);
         [$context, $fieldConfig, $dataTable] = $this->getCachedSearchEnvironment($project_id);
 
         $parsed = $this->parseSearchQuery($rawQuery, $fieldConfig);
+        if ($fuzzyThreshold < 100)
+            $parsed['detected_badges'][] = "Fuzzy ({$fuzzyThreshold}%)";
+        $parsed['fuzzy_threshold'] = $fuzzyThreshold;
+
         $querySets = $this->resolveQueryFieldSets($fieldConfig, $parsed);
         $metaMs = round((microtime(true) - $tMeta0) * 1000, 1);
+
+        $armEventIds = null;
+        $armEventSet = null;
+        if (!empty($context['multiple_arms']) && $selectedArm && !empty($context['arms'][$selectedArm]['event_ids'])) {
+            $armEventIds = array_values(array_map('intval', $context['arms'][$selectedArm]['event_ids']));
+            $armEventSet = array_fill_keys($armEventIds, true);
+        }
 
         $tQuery0 = microtime(true);
         $dagAllowedRecords = null;
@@ -889,9 +907,9 @@ class BetterSearch extends AbstractExternalModule
         $matchedHitsByRecord = [];
 
         if ($tier === 'fast')
-            $this->runTier1Queries($project_id, $dataTable, $context, $querySets, $parsed, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+            $this->runTier1Queries($project_id, $dataTable, $context, $querySets, $parsed, $dagAllowedRecords, $excludeRecords, $armEventIds, $armEventSet, $matchedHitsByRecord);
         else
-            $this->runTier2Queries($project_id, $dataTable, $querySets, $parsed, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+            $this->runTier2Queries($project_id, $dataTable, $querySets, $parsed, $dagAllowedRecords, $excludeRecords, $armEventIds, $armEventSet, $matchedHitsByRecord);
         $queryMs = round((microtime(true) - $tQuery0) * 1000, 1);
 
         $tHydrate0 = microtime(true);
@@ -925,9 +943,12 @@ class BetterSearch extends AbstractExternalModule
         array $parsed,
         $dagAllowedRecords,
         array $excludeRecords,
+        ?array $armEventIds,
+        ?array $armEventSet,
         array &$matchedHitsByRecord
     ) {
         $raw = $parsed['raw'];
+        $fuzzyThreshold = (int) ($parsed['fuzzy_threshold'] ?? 100);
         $tier1FieldNames = $querySets['tier1_fields'];
         if (empty($tier1FieldNames))
             return;
@@ -935,20 +956,25 @@ class BetterSearch extends AbstractExternalModule
         $qFast = $this->createQuery();
         $qFast->add("SELECT record, event_id, field_name, value, instance FROM $dataTable");
         $qFast->add("WHERE project_id = ? AND", [$project_id]);
+        if (!empty($armEventIds)) {
+            $qFast->addInClause('event_id', $armEventIds);
+            $qFast->add("AND");
+        }
         $qFast->addInClause('field_name', $tier1FieldNames);
 
-        [$orParts, $orParams] = $this->buildValueMatchClauses($raw, $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier1_enum_matches']);
-        $qFast->add("AND (" . implode(" OR ", $orParts) . ") LIMIT 500", $orParams);
+        [$orParts, $orParams] = $this->buildValueMatchClauses($raw, $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier1_enum_matches'], $fuzzyThreshold);
+        $limit = $fuzzyThreshold < 100 ? 1500 : 500;
+        $qFast->add("AND (" . implode(" OR ", $orParts) . ") LIMIT $limit", $orParams);
 
         $resFast = $qFast->execute();
         while ($row = $resFast->fetch_assoc())
-            $this->collectMatchHit($row, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+            $this->collectMatchHit($row, $dagAllowedRecords, $excludeRecords, $armEventSet, $parsed, $querySets['tier1_enum_matches'], $matchedHitsByRecord);
 
         $tokens = $parsed['tokens'];
         if (count($tokens) < 2 || count($tokens) > 5)
             return;
 
-        $this->runMultiTokenQuery($project_id, $dataTable, $tier1FieldNames, $tokens, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+        $this->runMultiTokenQuery($project_id, $dataTable, $tier1FieldNames, $tokens, $dagAllowedRecords, $excludeRecords, $armEventIds, $armEventSet, $parsed, $matchedHitsByRecord);
     }
 
     /**
@@ -961,6 +987,9 @@ class BetterSearch extends AbstractExternalModule
         array $tokens,
         $dagAllowedRecords,
         array $excludeRecords,
+        ?array $armEventIds,
+        ?array $armEventSet,
+        array $parsed,
         array &$matchedHitsByRecord
     ) {
         $selectSums = [];
@@ -987,6 +1016,10 @@ class BetterSearch extends AbstractExternalModule
         $qMulti = $this->createQuery();
         $qMulti->add("SELECT record, " . implode(", ", $selectSums) . " FROM $dataTable", $sumParams);
         $qMulti->add("WHERE project_id = ? AND", [$project_id]);
+        if (!empty($armEventIds)) {
+            $qMulti->addInClause('event_id', $armEventIds);
+            $qMulti->add("AND");
+        }
         $qMulti->addInClause('field_name', $tier1FieldNames);
         $qMulti->add("AND (" . implode(" OR ", $orTokenParts) . ")", $orTokenParams);
         $qMulti->add("GROUP BY record HAVING " . implode(" AND ", $havingParts) . " LIMIT 500");
@@ -1008,6 +1041,10 @@ class BetterSearch extends AbstractExternalModule
         $qMultiDetails = $this->createQuery();
         $qMultiDetails->add("SELECT record, event_id, field_name, value, instance FROM $dataTable");
         $qMultiDetails->add("WHERE project_id = ? AND", [$project_id]);
+        if (!empty($armEventIds)) {
+            $qMultiDetails->addInClause('event_id', $armEventIds);
+            $qMultiDetails->add("AND");
+        }
         $qMultiDetails->addInClause('record', $multiRecordIds);
         $qMultiDetails->add("AND");
         $qMultiDetails->addInClause('field_name', $tier1FieldNames);
@@ -1021,7 +1058,7 @@ class BetterSearch extends AbstractExternalModule
         $qMultiDetails->add("AND (" . implode(" OR ", $detailOr) . ")", $detailParams);
         $resDetails = $qMultiDetails->execute();
         while ($dRow = $resDetails->fetch_assoc())
-            $this->collectMatchHit($dRow, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+            $this->collectMatchHit($dRow, $dagAllowedRecords, $excludeRecords, $armEventSet, $parsed, [], $matchedHitsByRecord);
     }
 
     /**
@@ -1034,29 +1071,38 @@ class BetterSearch extends AbstractExternalModule
         array $parsed,
         $dagAllowedRecords,
         array $excludeRecords,
+        ?array $armEventIds,
+        ?array $armEventSet,
         array &$matchedHitsByRecord
     ) {
         $tier2Fields = $querySets['tier2_fields'];
         if (empty($tier2Fields))
             return;
 
+        $fuzzyThreshold = (int) ($parsed['fuzzy_threshold'] ?? 100);
+
         $qDeep = $this->createQuery();
         $qDeep->add("SELECT record, event_id, field_name, value, instance FROM $dataTable");
         $qDeep->add("WHERE project_id = ? AND", [$project_id]);
+        if (!empty($armEventIds)) {
+            $qDeep->addInClause('event_id', $armEventIds);
+            $qDeep->add("AND");
+        }
         $qDeep->addInClause('field_name', $tier2Fields);
 
-        [$orParts, $orParams] = $this->buildValueMatchClauses($parsed['raw'], $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier2_enum_matches']);
-        $qDeep->add("AND (" . implode(" OR ", $orParts) . ") LIMIT 500", $orParams);
+        [$orParts, $orParams] = $this->buildValueMatchClauses($parsed['raw'], $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier2_enum_matches'], $fuzzyThreshold);
+        $limit = $fuzzyThreshold < 100 ? 1500 : 500;
+        $qDeep->add("AND (" . implode(" OR ", $orParts) . ") LIMIT $limit", $orParams);
 
         $resDeep = $qDeep->execute();
         while ($row = $resDeep->fetch_assoc())
-            $this->collectMatchHit($row, $dagAllowedRecords, $excludeRecords, $matchedHitsByRecord);
+            $this->collectMatchHit($row, $dagAllowedRecords, $excludeRecords, $armEventSet, $parsed, $querySets['tier2_enum_matches'], $matchedHitsByRecord);
     }
 
     /**
-     * Build SQL OR clauses and bind parameters for raw values, dates, phones, and enum codes.
+     * Build SQL OR clauses and bind parameters for raw values, dates, phones, enum codes, and fuzzy n-grams.
      */
-    protected function buildValueMatchClauses($raw, array $dateVariants, array $phoneVariants, array $enumMatches)
+    protected function buildValueMatchClauses($raw, array $dateVariants, array $phoneVariants, array $enumMatches, int $fuzzyThreshold = 100)
     {
         $orParts = ["value LIKE ?"];
         $orParams = ['%' . $raw . '%'];
@@ -1077,20 +1123,158 @@ class BetterSearch extends AbstractExternalModule
             $orParams[] = $em['code'];
         }
 
+        if ($fuzzyThreshold < 100) {
+            $fuzzyPatterns = $this->buildFuzzySqlPatterns($raw);
+            foreach ($fuzzyPatterns as $fp) {
+                $orParts[] = "value LIKE ?";
+                $orParams[] = $fp;
+            }
+        }
+
         return [$orParts, $orParams];
     }
 
     /**
-     * Filter and collect a matching EAV row into the per-record bucket (capped at 60 unique records).
+     * Generate SQL LIKE patterns from 2-character bigrams so candidate rows with typos are retrieved by the index.
+     */
+    protected function buildFuzzySqlPatterns(string $raw): array
+    {
+        $words = preg_split('/[\s,]+/', strtolower(trim($raw)), -1, PREG_SPLIT_NO_EMPTY);
+        $patterns = [];
+
+        foreach ($words as $w) {
+            $len = strlen($w);
+            if ($len < 3)
+                continue;
+
+            $patterns[] = '%' . substr($w, 0, 2) . '%';
+            $patterns[] = '%' . substr($w, -2) . '%';
+            if ($len >= 4) {
+                $mid = (int) floor(($len - 2) / 2);
+                $patterns[] = '%' . substr($w, $mid, 2) . '%';
+            }
+        }
+
+        return array_values(array_unique($patterns));
+    }
+
+    /**
+     * Compute similarity percentage (0-100) between a field value and the parsed search query.
+     */
+    protected function computeFuzzySimilarity(string $value, array $parsed, string $fieldName = '', array $enumMatches = []): float
+    {
+        $valLower = strtolower(trim($value));
+        $rawLower = strtolower(trim((string) ($parsed['raw'] ?? '')));
+        if ($valLower === '' || $rawLower === '')
+            return 0.0;
+
+        if (strpos($valLower, $rawLower) !== false)
+            return 100.0;
+
+        foreach ($parsed['date_variants'] ?? [] as $dv)
+            if (strpos($valLower, strtolower($dv)) !== false)
+                return 100.0;
+
+        foreach ($parsed['phone_variants'] ?? [] as $pv)
+            if (strpos($valLower, strtolower($pv)) !== false)
+                return 100.0;
+
+        foreach ($enumMatches as $em)
+            if ($em['field_name'] === $fieldName && (string) $em['code'] === (string) $value)
+                return 100.0;
+
+        $tokens = !empty($parsed['tokens']) ? $parsed['tokens'] : [$rawLower];
+        $valWords = preg_split('/[\s,;:\-\/\(\)\.]+/', $valLower, -1, PREG_SPLIT_NO_EMPTY);
+        if (empty($valWords))
+            $valWords = [$valLower];
+
+        $tokenScores = [];
+        foreach ($tokens as $tok) {
+            $tokLower = strtolower($tok);
+            if (strpos($valLower, $tokLower) !== false) {
+                $tokenScores[] = 100.0;
+                continue;
+            }
+
+            $bestForToken = $this->computeWordPairSimilarity($tokLower, $valLower);
+            foreach ($valWords as $vw) {
+                $score = $this->computeWordPairSimilarity($tokLower, $vw);
+                if ($score > $bestForToken)
+                    $bestForToken = $score;
+            }
+            $tokenScores[] = $bestForToken;
+        }
+
+        return empty($tokenScores) ? 0.0 : min($tokenScores);
+    }
+
+    /**
+     * Compute similarity (0-100) between a query token and a candidate word, accounting for transpositions.
+     */
+    protected function computeWordPairSimilarity(string $queryWord, string $candidateWord): float
+    {
+        $qLen = strlen($queryWord);
+        $cLen = strlen($candidateWord);
+        if ($qLen === 0 || $cLen === 0 || $qLen > 64 || $cLen > 64)
+            return 0.0;
+
+        if (strpos($candidateWord, $queryWord) !== false)
+            return 100.0;
+
+        $maxLen = max($qLen, $cLen);
+        if (abs($qLen - $cLen) > ceil($maxLen * 0.5))
+            return 0.0;
+
+        $dist = $this->damerauLevenshtein($queryWord, $candidateWord);
+        return max(0.0, (1.0 - ($dist / $maxLen)) * 100.0);
+    }
+
+    /**
+     * Optimal string alignment distance (Levenshtein with adjacent transposition cost = 1).
+     */
+    protected function damerauLevenshtein(string $a, string $b): int
+    {
+        $lenA = strlen($a);
+        $lenB = strlen($b);
+        $d = [];
+
+        for ($i = 0; $i <= $lenA; $i++)
+            $d[$i][0] = $i;
+        for ($j = 0; $j <= $lenB; $j++)
+            $d[0][$j] = $j;
+
+        for ($i = 1; $i <= $lenA; $i++) {
+            for ($j = 1; $j <= $lenB; $j++) {
+                $cost = ($a[$i - 1] === $b[$j - 1]) ? 0 : 1;
+                $d[$i][$j] = min(
+                    $d[$i - 1][$j] + 1,
+                    $d[$i][$j - 1] + 1,
+                    $d[$i - 1][$j - 1] + $cost
+                );
+                if ($i > 1 && $j > 1 && $a[$i - 1] === $b[$j - 2] && $a[$i - 2] === $b[$j - 1])
+                    $d[$i][$j] = min($d[$i][$j], $d[$i - 2][$j - 2] + 1);
+            }
+        }
+
+        return $d[$lenA][$lenB];
+    }
+
+    /**
+     * Filter and collect a matching EAV row into the per-record bucket (capped at 150 unique records).
      */
     protected function collectMatchHit(
         array $row,
         $dagAllowedRecords,
         array $excludeRecords,
+        ?array $armEventSet,
+        array $parsed,
+        array $enumMatches,
         array &$matchedHitsByRecord
     ) {
         $recId = (string) ($row['record'] ?? '');
         if ($recId === '')
+            return;
+        if ($armEventSet !== null && !isset($armEventSet[(int) ($row['event_id'] ?? 0)]))
             return;
         if ($dagAllowedRecords !== null && !isset($dagAllowedRecords[$recId]))
             return;
@@ -1099,16 +1283,28 @@ class BetterSearch extends AbstractExternalModule
         if (!isset($matchedHitsByRecord[$recId]) && count($matchedHitsByRecord) >= 150)
             return;
 
+        $val = (string) ($row['value'] ?? '');
+        $fname = (string) ($row['field_name'] ?? '');
+        $fuzzyThreshold = (int) ($parsed['fuzzy_threshold'] ?? 100);
+        $similarity = 100.0;
+
+        if ($fuzzyThreshold < 100) {
+            $similarity = $this->computeFuzzySimilarity($val, $parsed, $fname, $enumMatches);
+            if ($similarity < $fuzzyThreshold)
+                return;
+        }
+
         $matchedHitsByRecord[$recId] = $matchedHitsByRecord[$recId] ?? [];
         if (count($matchedHitsByRecord[$recId]) >= 8)
             return;
 
-        $hitKey = ($row['field_name'] ?? '') . '|' . ($row['event_id'] ?? '') . '|' . ($row['instance'] ?? '1') . '|' . ($row['value'] ?? '');
+        $hitKey = $fname . '|' . ($row['event_id'] ?? '') . '|' . ($row['instance'] ?? '1') . '|' . $val;
         $matchedHitsByRecord[$recId][$hitKey] = [
-            'field_name' => (string) $row['field_name'],
+            'field_name' => $fname,
             'event_id' => (int) ($row['event_id'] ?? 0),
             'instance' => (int) ($row['instance'] ?: 1),
-            'value' => (string) ($row['value'] ?? ''),
+            'value' => $val,
+            'similarity' => $similarity,
         ];
     }
 
@@ -1153,6 +1349,19 @@ class BetterSearch extends AbstractExternalModule
         $recordDags = [];
         $recordArms = [];
         $recordAllFields = [];
+        $lockedForms = [];
+
+        $qLock = $this->createQuery();
+        $qLock->add("SELECT record, event_id, form_name, instance FROM redcap_locking_data WHERE project_id = ? AND", [$project_id]);
+        $qLock->addInClause('record', $recordIds);
+        $resLock = $qLock->execute();
+        while ($lRow = $resLock->fetch_assoc()) {
+            $lRec = (string) $lRow['record'];
+            $lEv = (int) ($lRow['event_id'] ?? 0);
+            $lForm = (string) ($lRow['form_name'] ?? '');
+            $lInst = (int) ($lRow['instance'] ?: 1);
+            $lockedForms["$lRec|$lEv|$lForm|$lInst"] = true;
+        }
 
         if ($needsComplexPiping && !empty($fieldConfig['custom_label_fields'])) {
             foreach ($recordIds as $rId) {
@@ -1221,8 +1430,11 @@ class BetterSearch extends AbstractExternalModule
                     $recordData[$rec][$fname] .= ', ' . $formatted;
 
                 $recordAllFields[$rec] = $recordAllFields[$rec] ?? [];
-                if (count($recordAllFields[$rec]) < 60)
-                    $recordAllFields[$rec][] = [$fname, $formatted, $val, $evId, $inst];
+                if (count($recordAllFields[$rec]) < 60) {
+                    $fForm = $meta['form_name'] ?? '';
+                    $isLocked = !empty($lockedForms["$rec|$evId|$fForm|$inst"]) ? 1 : 0;
+                    $recordAllFields[$rec][] = [$fname, $formatted, $val, $evId, $inst, $isLocked];
+                }
             }
         }
 
@@ -1252,6 +1464,12 @@ class BetterSearch extends AbstractExternalModule
                 $fname = $hit['field_name'];
                 $evId = $hit['event_id'];
                 $inst = $hit['instance'];
+                $hitSim = (float) ($hit['similarity'] ?? 100.0);
+                if ($hitSim >= 100.0)
+                    $score += 50;
+                else
+                    $score += (int) round($hitSim * 0.3);
+
                 $meta = $fieldConfig['field_meta'][$fname] ?? null;
 
                 $eventName = '';
@@ -1262,6 +1480,7 @@ class BetterSearch extends AbstractExternalModule
                 }
 
                 $formName = $meta['form_name'] ?? $context['first_form'];
+                $isFormLocked = !empty($lockedForms["$recId|$evId|$formName|$inst"]);
                 $formUrl = APP_PATH_WEBROOT . "DataEntry/index.php?pid={$project_id}&id=" . urlencode((string) $recId)
                     . "&page=" . urlencode((string) $formName)
                     . ($evId ? "&event_id={$evId}" : "")
@@ -1280,6 +1499,7 @@ class BetterSearch extends AbstractExternalModule
                     'value' => $this->formatFieldValue($hit['value'], $meta),
                     'raw_value' => $hit['value'],
                     'form_url' => $formUrl,
+                    'locked' => $isFormLocked,
                 ];
             }
 

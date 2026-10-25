@@ -56,6 +56,22 @@ if ($remainingFieldCount < 0)
     $remainingFieldCount = 0;
 
 $enableDeepChecked = !isset($_COOKIE['better_search_enable_deep']) || $_COOKIE['better_search_enable_deep'] !== '0';
+$showRecentChecked = !isset($_COOKIE['better_search_show_recent']) || $_COOKIE['better_search_show_recent'] !== '0';
+
+$defaultDagCookieKey = 'better_search_default_dag_' . (int) $project_id;
+$defaultDagFilter = isset($_COOKIE[$defaultDagCookieKey]) ? trim((string) $_COOKIE[$defaultDagCookieKey]) : '';
+if ($defaultDagFilter !== '' && $defaultDagFilter !== 'none' && !isset($context['dags'][(int) $defaultDagFilter]))
+    $defaultDagFilter = '';
+
+$fuzzyThreshold = isset($_COOKIE['better_search_fuzzy_threshold']) ? (int) $_COOKIE['better_search_fuzzy_threshold'] : 100;
+if ($fuzzyThreshold < 50 || $fuzzyThreshold > 100)
+    $fuzzyThreshold = 100;
+
+$savedPageSize = isset($_COOKIE['better_search_page_size']) ? (int) $_COOKIE['better_search_page_size'] : 20;
+if ($savedPageSize < 1 || $savedPageSize > 500)
+    $savedPageSize = 20;
+
+$msgParam = isset($_GET['msg']) ? trim((string) $_GET['msg']) : '';
 
 $module->initializeJavascriptModuleObject();
 $jsObjectName = $module->getJavascriptModuleObjectName();
@@ -78,6 +94,13 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
         Search for an existing record below<?= $canCreateRecord ? ' or create a new record' : '' ?>.
         Dates (e.g. <code>MM/DD/YYYY</code>), phone numbers, emails, multi-word queries, and multiple-choice labels are matched automatically.
     </div>
+
+    <?php if ($msgParam === 'delete'): ?>
+        <div id="bs-delete-notice" class="darkgreen" style="margin:10px 0 14px;max-width:960px;">
+            <img src="<?= APP_PATH_IMAGES ?>tick.png" alt="" style="vertical-align:middle;position:relative;top:-1px;margin-right:4px;">
+            <b><?= htmlspecialchars($context['pk_label'], ENT_QUOTES, 'UTF-8') ?> successfully deleted.</b>
+        </div>
+    <?php endif; ?>
 
     <?php $module->renderDevelopmentNotices($context, $counts); ?>
 
@@ -141,10 +164,10 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                         >
                         <?php if ($canSelectDag): ?>
                             <select id="bs-dag-filter" class="bs-select" title="Filter search results by Data Access Group">
-                                <option value="">All Data Access Groups</option>
-                                <option value="none">[No DAG assigned]</option>
+                                <option value=""<?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
+                                <option value="none"<?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
                                 <?php foreach ($context['dags'] as $gid => $gname): ?>
-                                    <option value="<?= (int) $gid ?>"><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
+                                    <option value="<?= (int) $gid ?>"<?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
                                 <?php endforeach; ?>
                             </select>
                         <?php endif; ?>
@@ -156,14 +179,63 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
 
                 <div id="bs-chip-bar" class="bs-chip-bar"></div>
 
+                <div id="bs-recent-records-row" class="bs-recent-row" style="display:none;"></div>
+
                 <div class="bs-search-options">
-                    <label class="bs-checkbox-label">
-                        <input type="checkbox" id="bs-enable-deep"<?= $enableDeepChecked ? ' checked' : '' ?>>
-                        Include deep search across all project fields (<?= $remainingFieldCount ?> additional fields)
-                    </label>
+                    <button type="button" id="bs-toggle-settings-btn" class="bs-link-btn">
+                        <i class="fas fa-sliders-h"></i> <span id="bs-toggle-settings-label">User settings</span>
+                    </button>
+                    <span id="bs-active-settings-badges" class="bs-settings-badges"></span>
                     <button type="button" id="bs-toggle-priority-btn" class="bs-link-btn" data-count="<?= count($tier1Summary) ?>">
                         Show fast search fields (<?= count($tier1Summary) ?>)
                     </button>
+                </div>
+
+                <div id="bs-settings-drawer" class="bs-settings-drawer">
+                    <div class="bs-settings-title">
+                        <i class="fas fa-user-cog"></i> User Search Settings <span class="bs-settings-sub">(saved in browser cookies)</span>
+                    </div>
+                    <div class="bs-settings-grid">
+                        <div class="bs-setting-item">
+                            <label class="bs-checkbox-label">
+                                <input type="checkbox" id="bs-enable-deep"<?= $enableDeepChecked ? ' checked' : '' ?>>
+                                Include deep search across all project fields (<?= $remainingFieldCount ?> additional fields)
+                            </label>
+                        </div>
+                        <div class="bs-setting-item">
+                            <label class="bs-checkbox-label">
+                                <input type="checkbox" id="bs-show-recent"<?= $showRecentChecked ? ' checked' : '' ?>>
+                                Show recently viewed records
+                            </label>
+                        </div>
+                        <?php if ($canSelectDag): ?>
+                            <div class="bs-setting-item">
+                                <label for="bs-default-dag-setting" class="bs-setting-label">Default search Data Access Group:</label>
+                                <select id="bs-default-dag-setting" class="bs-select bs-select-sm">
+                                    <option value=""<?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
+                                    <option value="none"<?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
+                                    <?php foreach ($context['dags'] as $gid => $gname): ?>
+                                        <option value="<?= (int) $gid ?>"<?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        <?php endif; ?>
+                        <div class="bs-setting-item bs-setting-fuzzy">
+                            <label for="bs-fuzzy-threshold" class="bs-setting-label">
+                                Fuzzy search match threshold:
+                                <strong id="bs-fuzzy-threshold-val"><?= $fuzzyThreshold >= 100 ? '100% (Off)' : ($fuzzyThreshold . '%') ?></strong>
+                            </label>
+                            <input
+                                type="range"
+                                id="bs-fuzzy-threshold"
+                                class="bs-fuzzy-slider"
+                                min="50"
+                                max="100"
+                                step="5"
+                                value="<?= (int) $fuzzyThreshold ?>"
+                            >
+                        </div>
+                    </div>
                 </div>
 
                 <div id="bs-priority-drawer" class="bs-priority-drawer">
@@ -268,7 +340,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                         type="number"
                                         id="bs-page-size-input"
                                         class="bs-page-size-input"
-                                        value="20"
+                                        value="<?= (int) $savedPageSize ?>"
                                         min="1"
                                         max="500"
                                         step="1"
@@ -297,6 +369,7 @@ if ($context['longitudinal'])
     window.BetterSearchConfig = {
         module: <?= $jsObjectName ?>,
         projectId: <?= (int) $project_id ?>,
+        userId: <?= json_encode(defined('USERID') ? (string) USERID : 'anon') ?>,
         webroot: <?= json_encode(APP_PATH_WEBROOT) ?>,
         hasCustomLabel: <?= $hasCustomLabel ? 'true' : 'false' ?>,
         hasSecondaryPk: <?= $hasSecondaryPk ? 'true' : 'false' ?>,

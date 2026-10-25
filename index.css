@@ -540,6 +540,138 @@
     text-decoration: underline;
 }
 
+.bs-lock-icon {
+    color: #8a6d3b;
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+/* Recently Viewed Records */
+.bs-recent-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    border: 1px solid #dcdcdc;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
+.bs-recent-label {
+    font-weight: 700;
+    color: #555;
+    margin-right: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.bs-recent-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    background: #f5f5f5;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    color: #800000 !important;
+    font-weight: 600;
+    text-decoration: none !important;
+    font-size: 12px;
+}
+
+.bs-recent-chip:hover {
+    background: #ececec;
+    border-color: #999;
+}
+
+.bs-recent-chip-lbl {
+    font-weight: 400;
+    color: #555;
+    max-width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* User Settings Drawer */
+.bs-settings-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: auto;
+}
+
+.bs-setting-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #e9ecef;
+    color: #444;
+    border: 1px solid #d0d4d9;
+}
+
+.bs-settings-drawer {
+    display: none;
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #fff;
+    border: 1px solid #d0d0d0;
+    border-radius: 3px;
+    font-size: 12px;
+}
+
+.bs-settings-title {
+    font-weight: 700;
+    color: #222;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #eee;
+}
+
+.bs-settings-sub {
+    font-weight: 400;
+    color: #777;
+    font-size: 11px;
+    margin-left: 4px;
+}
+
+.bs-settings-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bs-setting-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.bs-setting-label {
+    margin: 0;
+    font-weight: 400;
+    color: #333;
+}
+
+.bs-select-sm {
+    height: 28px;
+    padding: 2px 26px 2px 8px;
+    font-size: 12px;
+}
+
+.bs-fuzzy-slider {
+    width: 160px;
+    cursor: pointer;
+    accent-color: #800000;
+}
+
 .bs-empty {
     padding: 22px 12px;
     text-align: center;

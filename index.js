@@ -8,11 +8,17 @@
         const hasCustomLabel = Boolean(cfg.hasCustomLabel);
         const hasSecondaryPk = Boolean(cfg.hasSecondaryPk);
         const projectId = cfg.projectId || 0;
+        const userId = cfg.userId || 'anon';
         const webroot = cfg.webroot || '';
         const fieldMetaMap = cfg.fieldMeta || {};
         const eventsMap = cfg.events || {};
         let selectedArm = cfg.selectedArm || 1;
         const totalColCount = 2 + (hasCustomLabel ? 1 : 0) + (hasSecondaryPk ? 1 : 0);
+
+        if (window.location.search.indexOf('msg=') !== -1 && window.history && window.history.replaceState) {
+            const cleanUrl = window.location.href.replace(/([?&])msg=[^&]*(&|$)/, (m, p1, p2) => (p1 === '?' && p2 ? '?' : (p2 ? p1 : '')));
+            window.history.replaceState(null, '', cleanUrl);
+        }
 
         const armTabs = document.querySelectorAll('.bs-arm-tab');
         const armCountLabelEl = document.getElementById('bs-arm-count-label');
@@ -24,10 +30,20 @@
         const searchInput = document.getElementById('bs-search-input');
         const searchBtnLabel = document.getElementById('bs-search-btn-label');
         const chipBar = document.getElementById('bs-chip-bar');
+        const recentRowEl = document.getElementById('bs-recent-records-row');
         const defaultPlaceholder = searchInput ? (searchInput.getAttribute('placeholder') || '') : '';
 
         const dagFilterSelect = document.getElementById('bs-dag-filter');
         const enableDeepCheckbox = document.getElementById('bs-enable-deep');
+        const showRecentCheckbox = document.getElementById('bs-show-recent');
+        const defaultDagSettingSelect = document.getElementById('bs-default-dag-setting');
+        const fuzzySlider = document.getElementById('bs-fuzzy-threshold');
+        const fuzzyValLabel = document.getElementById('bs-fuzzy-threshold-val');
+        const toggleSettingsBtn = document.getElementById('bs-toggle-settings-btn');
+        const toggleSettingsLabel = document.getElementById('bs-toggle-settings-label');
+        const settingsDrawer = document.getElementById('bs-settings-drawer');
+        const activeSettingsBadgesEl = document.getElementById('bs-active-settings-badges');
+
         const resultsBox = document.getElementById('bs-results-box');
         const resultsTbody = document.getElementById('bs-results-tbody');
         const statusBadges = document.getElementById('bs-status-badges');
@@ -52,17 +68,25 @@
         let activeChips = [];
         let currentPage = 1;
         let pageSize = 20;
+        let fuzzyThreshold = fuzzySlider ? (parseInt(fuzzySlider.value, 10) || 100) : 100;
         let activeRowIndex = -1;
+
+        const setCookie = (name, val) => {
+            document.cookie = name + '=' + encodeURIComponent(String(val)) + '; path=/; max-age=31536000; SameSite=Lax';
+        };
+
+        const recentStorageKey = 'better_search_recent_' + projectId + '_' + userId;
+        const sessionStateKey = 'better_search_state_' + projectId + '_' + userId;
 
         const fastPrefetchCache = new Map();
         let prefetchTimer = null;
         let prefetchInFlight = false;
 
-        const buildFastCacheKey = (query, arm, dagFilter) =>
-            String(arm || 1) + '|' + String(dagFilter || '') + '|' + query.trim().toLowerCase();
+        const buildFastCacheKey = (query, arm, dagFilter, fuzzy) =>
+            String(arm || 1) + '|' + String(dagFilter || '') + '|' + String(fuzzy || 100) + '|' + query.trim().toLowerCase();
 
-        const fetchFastSearch = (query, arm, dagFilter) => {
-            const key = buildFastCacheKey(query, arm, dagFilter);
+        const fetchFastSearch = (query, arm, dagFilter, fuzzy) => {
+            const key = buildFastCacheKey(query, arm, dagFilter, fuzzy);
             const now = Date.now();
             const cached = fastPrefetchCache.get(key);
             if (cached && (now - cached.ts) < 60000)
@@ -77,7 +101,8 @@
             const promise = module.ajax('search_fast', {
                 query: query.trim(),
                 arm: arm,
-                dag_filter: dagFilter
+                dag_filter: dagFilter,
+                fuzzy_threshold: fuzzy
             }).catch((err) => {
                 fastPrefetchCache.delete(key);
                 throw err;
@@ -96,7 +121,7 @@
                 return;
 
             const dagFilter = dagFilterSelect ? dagFilterSelect.value : '';
-            const key = buildFastCacheKey(val, selectedArm, dagFilter);
+            const key = buildFastCacheKey(val, selectedArm, dagFilter, fuzzyThreshold);
             const cached = fastPrefetchCache.get(key);
             if (cached && (Date.now() - cached.ts) < 60000)
                 return;
@@ -105,7 +130,7 @@
                 return;
 
             prefetchInFlight = true;
-            fetchFastSearch(val, selectedArm, dagFilter)
+            fetchFastSearch(val, selectedArm, dagFilter, fuzzyThreshold)
                 .catch(() => {})
                 .finally(() => {
                     prefetchInFlight = false;
@@ -226,6 +251,26 @@
             return variants;
         };
 
+        const damerauLevenshteinJs = (a, b) => {
+            const lenA = a.length;
+            const lenB = b.length;
+            const d = [];
+            for (let i = 0; i <= lenA; i++)
+                d[i] = [i];
+            for (let j = 0; j <= lenB; j++)
+                d[0][j] = j;
+
+            for (let i = 1; i <= lenA; i++) {
+                for (let j = 1; j <= lenB; j++) {
+                    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+                    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+                    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+                        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+                }
+            }
+            return d[lenA][lenB];
+        };
+
         const textContainsVariant = (haystack, variants) => {
             if (!haystack)
                 return false;
@@ -240,6 +285,22 @@
                     if (/^\d{7,11}$/.test(variants[j]) && hayDigits.indexOf(variants[j]) !== -1)
                         return true;
             }
+
+            if (fuzzyThreshold < 100 && variants.length > 0 && variants[0].length >= 3) {
+                const qWord = variants[0];
+                const words = lower.split(/[\s,;:\-/().]+/).filter(Boolean);
+                for (let w = 0; w < words.length; w++) {
+                    const cand = words[w];
+                    const maxLen = Math.max(qWord.length, cand.length);
+                    if (maxLen === 0 || maxLen > 64 || Math.abs(qWord.length - cand.length) > Math.ceil(maxLen * 0.5))
+                        continue;
+                    const dist = damerauLevenshteinJs(qWord, cand);
+                    const pct = (1 - (dist / maxLen)) * 100;
+                    if (pct >= fuzzyThreshold)
+                        return true;
+                }
+            }
+
             return false;
         };
 
@@ -251,6 +312,7 @@
             const rawVal = tuple[2];
             const evId = tuple[3] || 0;
             const inst = tuple[4] || 1;
+            const locked = Boolean(tuple[5]);
             const meta = fieldMetaMap[fname] || [fname, '', fname];
             const fieldLabel = meta[0] || fname;
             const formName = meta[1] || '';
@@ -273,7 +335,8 @@
                 instance: inst,
                 value: formatted,
                 raw_value: rawVal,
-                form_url: formUrl
+                form_url: formUrl,
+                locked: locked
             };
         };
 
@@ -386,6 +449,101 @@
             }
         };
 
+        const getRecentRecords = () => {
+            try {
+                const raw = localStorage.getItem(recentStorageKey);
+                if (!raw)
+                    return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        };
+
+        const saveRecentRecord = (rec) => {
+            if (!rec || !rec.record)
+                return;
+            try {
+                const list = getRecentRecords().filter((item) => String(item.record) !== String(rec.record));
+                list.unshift({
+                    record: String(rec.record),
+                    custom_label: rec.custom_label || '',
+                    record_url: rec.record_url || ''
+                });
+                if (list.length > 8)
+                    list.length = 8;
+                localStorage.setItem(recentStorageKey, JSON.stringify(list));
+            } catch (e) {}
+        };
+
+        const saveSearchStateToSession = (leavingForRecord) => {
+            try {
+                if (activeChips.length === 0) {
+                    sessionStorage.removeItem(sessionStateKey);
+                    return;
+                }
+                sessionStorage.setItem(sessionStateKey, JSON.stringify({
+                    activeChips: activeChips,
+                    baseRecords: baseRecords,
+                    currentPage: currentPage,
+                    selectedArm: selectedArm,
+                    dagFilter: dagFilterSelect ? dagFilterSelect.value : '',
+                    statusBadgesHtml: statusBadges ? statusBadges.innerHTML : '',
+                    deepStatusHtml: deepStatusEl ? deepStatusEl.innerHTML : '',
+                    leavingForRecord: Boolean(leavingForRecord),
+                    ts: Date.now()
+                }));
+            } catch (e) {}
+        };
+
+        const renderRecentRecords = () => {
+            if (!recentRowEl)
+                return;
+            const showRecent = !showRecentCheckbox || showRecentCheckbox.checked;
+            if (!showRecent || activeChips.length > 0) {
+                recentRowEl.style.display = 'none';
+                recentRowEl.innerHTML = '';
+                return;
+            }
+
+            const recent = getRecentRecords();
+            if (recent.length === 0) {
+                recentRowEl.style.display = 'none';
+                recentRowEl.innerHTML = '';
+                return;
+            }
+
+            recentRowEl.style.display = 'flex';
+            recentRowEl.innerHTML = '<span class="bs-recent-label"><i class="fas fa-history"></i> Recent:</span>';
+
+            for (let i = 0; i < recent.length; i++) {
+                const item = recent[i];
+                const a = document.createElement('a');
+                a.className = 'bs-recent-chip';
+                a.href = item.record_url;
+                let inner = '<span>' + escapeHtml(item.record) + '</span>';
+                if (item.custom_label)
+                    inner += '<span class="bs-recent-chip-lbl">(' + escapeHtml(item.custom_label) + ')</span>';
+                a.innerHTML = inner;
+                a.addEventListener('click', () => saveRecentRecord(item));
+                recentRowEl.appendChild(a);
+            }
+
+            const clearRecentBtn = document.createElement('button');
+            clearRecentBtn.type = 'button';
+            clearRecentBtn.className = 'bs-link-btn';
+            clearRecentBtn.style.marginLeft = 'auto';
+            clearRecentBtn.textContent = 'Clear';
+            clearRecentBtn.addEventListener('click', () => {
+                try {
+                    localStorage.removeItem(recentStorageKey);
+                } catch (e) {}
+                renderRecentRecords();
+            });
+            recentRowEl.appendChild(clearRecentBtn);
+        };
+
         const clearAllChips = () => {
             activeSearchToken++;
             activeChips = [];
@@ -399,6 +557,8 @@
             }
             renderChipBar();
             updateSearchBoxMode();
+            renderRecentRecords();
+            saveSearchStateToSession(false);
             if (resultsBox)
                 resultsBox.style.display = 'none';
         };
@@ -526,18 +686,29 @@
 
                 const valSnippet = snippetAndHighlightMatch(hit.value, queryStr, 110);
                 const valTitleAttr = valSnippet.truncated ? ' title="' + escapeHtml(valSnippet.full) + '"' : '';
+                const lockHtml = hit.locked
+                    ? ' <i class="fas fa-lock bs-lock-icon" title="Form is locked"></i>'
+                    : '';
 
                 matchesHtml += '<div class="bs-hit-row">'
                     + '<span class="bs-hit-label">' + escapeHtml(hit.field_label) + ':</span> '
                     + '<span class="bs-hit-val"' + valTitleAttr + '>' + valSnippet.html + '</span>'
                     + contextBadge
                     + '<a class="bs-hit-form-link" href="' + escapeHtml(hit.form_url) + '" title="Open ' + escapeHtml(hit.form_label) + '">'
-                    + '<i class="fas fa-external-link-alt"></i> ' + escapeHtml(hit.form_label)
+                    + '<i class="fas fa-external-link-alt"></i> ' + escapeHtml(hit.form_label) + lockHtml
                     + '</a>'
                     + '</div>';
             }
             tdMatches.innerHTML = matchesHtml;
             tr.appendChild(tdMatches);
+
+            const links = tr.querySelectorAll('a.bs-rec-id, a.bs-hit-form-link');
+            links.forEach((lnk) => {
+                lnk.addEventListener('click', () => {
+                    saveRecentRecord(rec);
+                    saveSearchStateToSession(true);
+                });
+            });
 
             return tr;
         };
@@ -589,6 +760,7 @@
                     currentPage = targetPage;
                     activeRowIndex = -1;
                     renderCurrentPage();
+                    saveSearchStateToSession(false);
                 });
             return btn;
         };
@@ -666,6 +838,7 @@
                 return;
 
             pageSize = parsed;
+            setCookie('better_search_page_size', parsed);
             currentPage = 1;
             activeRowIndex = -1;
             if (currentRecords.length > 0)
@@ -681,16 +854,68 @@
             pageSizeInput.addEventListener('input', () => applyPageSizeFromInput(false));
         }
 
-        if (enableDeepCheckbox) {
-            const cookieMatch = document.cookie.match(/(?:^|;\s*)better_search_enable_deep=([^;]*)/);
-            if (cookieMatch)
-                enableDeepCheckbox.checked = cookieMatch[1] !== '0';
+        const updateActiveSettingsBadges = () => {
+            if (!activeSettingsBadgesEl)
+                return;
+            let badges = '';
+            if (enableDeepCheckbox && !enableDeepCheckbox.checked)
+                badges += '<span class="bs-setting-badge" title="Deep search is disabled in user settings">Deep: Off</span>';
+            if (fuzzyThreshold < 100)
+                badges += '<span class="bs-setting-badge" title="Fuzzy matching enabled">Fuzzy: ' + fuzzyThreshold + '%</span>';
+            activeSettingsBadgesEl.innerHTML = badges;
+        };
 
+        if (toggleSettingsBtn && settingsDrawer)
+            toggleSettingsBtn.addEventListener('click', () => {
+                const hidden = settingsDrawer.style.display === 'none' || settingsDrawer.style.display === '';
+                settingsDrawer.style.display = hidden ? 'block' : 'none';
+                if (toggleSettingsLabel)
+                    toggleSettingsLabel.textContent = hidden ? 'Hide user settings' : 'User settings';
+            });
+
+        if (enableDeepCheckbox)
             enableDeepCheckbox.addEventListener('change', () => {
-                const val = enableDeepCheckbox.checked ? '1' : '0';
-                document.cookie = 'better_search_enable_deep=' + val + '; path=/; max-age=31536000; SameSite=Lax';
+                setCookie('better_search_enable_deep', enableDeepCheckbox.checked ? '1' : '0');
+                updateActiveSettingsBadges();
+            });
+
+        if (showRecentCheckbox)
+            showRecentCheckbox.addEventListener('change', () => {
+                setCookie('better_search_show_recent', showRecentCheckbox.checked ? '1' : '0');
+                renderRecentRecords();
+            });
+
+        if (defaultDagSettingSelect)
+            defaultDagSettingSelect.addEventListener('change', () => {
+                const val = defaultDagSettingSelect.value;
+                setCookie('better_search_default_dag_' + projectId, val);
+                if (dagFilterSelect && dagFilterSelect.value !== val) {
+                    dagFilterSelect.value = val;
+                    if (activeChips.length > 0)
+                        runPrimarySearch(activeChips[0], activeChips.slice(1));
+                }
+            });
+
+        if (fuzzySlider) {
+            fuzzySlider.addEventListener('input', () => {
+                const val = parseInt(fuzzySlider.value, 10) || 100;
+                fuzzyThreshold = val;
+                if (fuzzyValLabel)
+                    fuzzyValLabel.textContent = val >= 100 ? '100% (Off)' : (val + '%');
+                updateActiveSettingsBadges();
+            });
+
+            fuzzySlider.addEventListener('change', () => {
+                const val = parseInt(fuzzySlider.value, 10) || 100;
+                fuzzyThreshold = val;
+                setCookie('better_search_fuzzy_threshold', val);
+                updateActiveSettingsBadges();
+                if (activeChips.length > 0)
+                    runPrimarySearch(activeChips[0], activeChips.slice(1));
             });
         }
+
+        updateActiveSettingsBadges();
 
         if (togglePriorityBtn && priorityDrawer)
             togglePriorityBtn.addEventListener('click', () => {
@@ -731,14 +956,13 @@
                     if (tabHref && window.history && window.history.replaceState)
                         window.history.replaceState(null, '', tabHref);
 
-                    if (baseRecords.length > 0) {
-                        for (let i = 0; i < baseRecords.length; i++) {
-                            const rec = baseRecords[i].rec;
-                            const armNums = rec.arm_nums || [];
-                            if (armNums.length === 0 || armNums.indexOf(newArm) !== -1)
-                                rec.record_url = rec.record_url.replace(/([?&]arm=)\d+/, '$1' + newArm);
-                        }
-                        applyClientFilters();
+                    if (activeChips.length > 0) {
+                        runPrimarySearch(activeChips[0], activeChips.slice(1));
+                    } else if (searchInput && searchInput.value.trim() !== '') {
+                        const val = searchInput.value.trim();
+                        searchInput.value = '';
+                        activeChips.push(val);
+                        runPrimarySearch(val, []);
                     }
                 });
             });
@@ -808,6 +1032,7 @@
 
             renderChipBar();
             updateSearchBoxMode();
+            renderRecentRecords();
 
             const runDeep = enableDeepCheckbox && enableDeepCheckbox.checked;
             const dagFilter = dagFilterSelect ? dagFilterSelect.value : '';
@@ -817,7 +1042,7 @@
             deepStatusEl.innerHTML = '';
             renderEmptyState('Running fast search...');
 
-            fetchFastSearch(query, selectedArm, dagFilter).then((fastRes) => {
+            fetchFastSearch(query, selectedArm, dagFilter, fuzzyThreshold).then((fastRes) => {
                 if (myToken !== activeSearchToken)
                     return;
 
@@ -848,6 +1073,7 @@
                     badgesHtml += '<span class="bs-pill bs-pill-detected">' + escapeHtml(detected[b]) + '</span>';
 
                 statusBadges.innerHTML = badgesHtml;
+                saveSearchStateToSession(false);
 
                 if (!runDeep || (fastRes && fastRes.tier2_field_count === 0))
                     return;
@@ -870,6 +1096,7 @@
                     query: query,
                     arm: selectedArm,
                     dag_filter: dagFilter,
+                    fuzzy_threshold: fuzzyThreshold,
                     exclude_records: excludeIds
                 }).then((deepRes) => {
                     if (myToken !== activeSearchToken)
@@ -889,6 +1116,7 @@
 
                     deepStatusEl.innerHTML = '<span class="bs-pill bs-pill-done">'
                         + 'Deep: +' + tier2Recs.length + ' (' + elapsedDeep + ' ms)</span>';
+                    saveSearchStateToSession(false);
                 }).catch(() => {
                     if (myToken !== activeSearchToken)
                         return;
@@ -986,9 +1214,71 @@
             } else if (e.key === 'Enter' && activeRowIndex >= 0 && document.activeElement !== searchInput && document.activeElement !== manualIdInput) {
                 e.preventDefault();
                 const url = rows[activeRowIndex].getAttribute('data-record-url');
-                if (url)
+                if (url) {
+                    const startIdx = (currentPage - 1) * pageSize;
+                    const item = currentRecords[startIdx + activeRowIndex];
+                    if (item && item.rec)
+                        saveRecentRecord(item.rec);
+                    saveSearchStateToSession(true);
                     window.location.href = url;
+                }
             }
         });
+
+        const tryRestoreSearchStateFromSession = () => {
+            try {
+                const raw = sessionStorage.getItem(sessionStateKey);
+                if (!raw)
+                    return false;
+
+                const saved = JSON.parse(raw);
+                if (!saved || !Array.isArray(saved.activeChips) || saved.activeChips.length === 0)
+                    return false;
+
+                const navEntries = (window.performance && window.performance.getEntriesByType)
+                    ? window.performance.getEntriesByType('navigation')
+                    : [];
+                const isBackForward = (navEntries.length > 0 && navEntries[0].type === 'back_forward')
+                    || (window.performance && window.performance.navigation && window.performance.navigation.type === 2);
+
+                if (!isBackForward && !saved.leavingForRecord)
+                    return false;
+
+                if ((Date.now() - (saved.ts || 0)) > 1800000) {
+                    sessionStorage.removeItem(sessionStateKey);
+                    return false;
+                }
+
+                activeChips = saved.activeChips;
+                baseRecords = Array.isArray(saved.baseRecords) ? saved.baseRecords : [];
+                if (dagFilterSelect && saved.dagFilter !== undefined)
+                    dagFilterSelect.value = saved.dagFilter;
+
+                renderChipBar();
+                updateSearchBoxMode();
+                renderRecentRecords();
+
+                if (resultsBox)
+                    resultsBox.style.display = 'block';
+                if (statusBadges && saved.statusBadgesHtml)
+                    statusBadges.innerHTML = saved.statusBadgesHtml;
+                if (deepStatusEl && saved.deepStatusHtml)
+                    deepStatusEl.innerHTML = saved.deepStatusHtml;
+
+                applyClientFilters();
+                if (saved.currentPage && saved.currentPage > 1) {
+                    currentPage = saved.currentPage;
+                    renderCurrentPage();
+                }
+
+                saveSearchStateToSession(false);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        if (!tryRestoreSearchStateFromSession())
+            renderRecentRecords();
     });
 })();
