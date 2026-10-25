@@ -672,6 +672,13 @@
     accent-color: #800000;
 }
 
+#bs-fuzzy-threshold-val {
+    display: inline-block;
+    min-width: 85px;
+    font-size: 12px;
+    color: #800000;
+}
+
 .bs-empty {
     padding: 22px 12px;
     text-align: center;

@@ -221,10 +221,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                             </div>
                         <?php endif; ?>
                         <div class="bs-setting-item bs-setting-fuzzy">
-                            <label for="bs-fuzzy-threshold" class="bs-setting-label">
-                                Fuzzy search match threshold:
-                                <strong id="bs-fuzzy-threshold-val"><?= $fuzzyThreshold >= 100 ? '100% (Off)' : ($fuzzyThreshold . '%') ?></strong>
-                            </label>
+                            <label for="bs-fuzzy-threshold" class="bs-setting-label">Fuzzy search match threshold:</label>
                             <input
                                 type="range"
                                 id="bs-fuzzy-threshold"
@@ -234,6 +231,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                 step="5"
                                 value="<?= (int) $fuzzyThreshold ?>"
                             >
+                            <strong id="bs-fuzzy-threshold-val"><?= $fuzzyThreshold >= 100 ? '100% (Off)' : ($fuzzyThreshold . '%') ?></strong>
                         </div>
                     </div>
                 </div>
