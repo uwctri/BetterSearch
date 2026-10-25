@@ -498,7 +498,23 @@
             if (tokens.length === 0)
                 tokens = [rawQuery.trim()];
 
-            const patterns = tokens
+            const expandedTokens = [];
+            for (let i = 0; i < tokens.length; i++) {
+                const tok = tokens[i];
+                expandedTokens.push(tok);
+                const d = tok.replace(/\D+/g, '');
+                if (d.length === 6) {
+                    expandedTokens.push('(' + d.substr(0, 3) + ') ' + d.substr(3, 3));
+                    expandedTokens.push(d.substr(0, 3) + '-' + d.substr(3, 3));
+                } else if (d.length === 10) {
+                    expandedTokens.push('(' + d.substr(0, 3) + ') ' + d.substr(3, 3) + '-' + d.substr(6, 4));
+                    expandedTokens.push(d.substr(0, 3) + '-' + d.substr(3, 3) + '-' + d.substr(6, 4));
+                } else if (d.length === 7) {
+                    expandedTokens.push(d.substr(0, 3) + '-' + d.substr(3, 4));
+                }
+            }
+
+            const patterns = expandedTokens
                 .map((t) => escapeHtml(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
                 .filter(Boolean);
 
@@ -560,8 +576,39 @@
             }
 
             const digits = lower.replace(/\D+/g, '');
-            if (digits.length >= 7 && digits.length <= 11 && /^[\d\s\-().+]+$/.test(lower))
+            if (digits.length >= 6 && digits.length <= 11 && /^[\d\s\-().+]+$/.test(lower)) {
                 variants.push(digits);
+                if (digits.length === 6) {
+                    const area = digits.substr(0, 3);
+                    const prefix = digits.substr(3, 3);
+                    variants.push('(' + area + ') ' + prefix);
+                    variants.push(area + '-' + prefix);
+                    variants.push(area + ' ' + prefix);
+                    variants.push('(' + area + ')' + prefix);
+                } else if (digits.length === 7) {
+                    const prefix = digits.substr(0, 3);
+                    const line = digits.substr(3, 4);
+                    const area = digits.substr(0, 3);
+                    const prefix7 = digits.substr(3, 3);
+                    const line1 = digits.substr(6, 1);
+                    variants.push(prefix + '-' + line);
+                    variants.push('(' + area + ') ' + prefix7 + '-' + line1);
+                    variants.push(area + '-' + prefix7 + '-' + line1);
+                } else if (digits.length >= 8 && digits.length <= 9) {
+                    const area = digits.substr(0, 3);
+                    const prefix = digits.substr(3, 3);
+                    const line = digits.substr(6);
+                    variants.push('(' + area + ') ' + prefix + '-' + line);
+                    variants.push(area + '-' + prefix + '-' + line);
+                } else if (digits.length === 10) {
+                    const area = digits.substr(0, 3);
+                    const prefix = digits.substr(3, 3);
+                    const line = digits.substr(6, 4);
+                    variants.push('(' + area + ') ' + prefix + '-' + line);
+                    variants.push(area + '-' + prefix + '-' + line);
+                    variants.push(prefix + '-' + line);
+                }
+            }
 
             return variants;
         };
@@ -597,7 +644,7 @@
             if (variants.length > 1) {
                 const hayDigits = lower.replace(/\D+/g, '');
                 for (let j = 1; j < variants.length; j++)
-                    if (/^\d{7,11}$/.test(variants[j]) && hayDigits.indexOf(variants[j]) !== -1)
+                    if (/^\d{6,11}$/.test(variants[j]) && hayDigits.indexOf(variants[j]) !== -1)
                         return true;
             }
 

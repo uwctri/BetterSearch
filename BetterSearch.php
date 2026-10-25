@@ -702,25 +702,42 @@ class BetterSearch extends AbstractExternalModule
         $digitsOnly = preg_replace('/\D+/', '', $query);
         $looksLikePhone = empty($dateVariants)
             && preg_match('/^[\d\s\-\(\)\.\+]+$/', $query)
-            && strlen($digitsOnly) >= 7
+            && strlen($digitsOnly) >= 6
             && strlen($digitsOnly) <= 11;
 
         if ($looksLikePhone) {
             if (strlen($digitsOnly) === 11 && $digitsOnly[0] === '1')
                 $digitsOnly = substr($digitsOnly, 1);
 
-            if (strlen($digitsOnly) === 10) {
+            $len = strlen($digitsOnly);
+            if ($len === 10) {
                 $area = substr($digitsOnly, 0, 3);
                 $prefix = substr($digitsOnly, 3, 3);
                 $line = substr($digitsOnly, 6, 4);
                 $redcapPhone = "($area) $prefix-$line";
                 $phoneVariants = array_unique([$redcapPhone, "$area-$prefix-$line", $digitsOnly, "$prefix-$line"]);
                 $detectedBadges[] = "Phone ($redcapPhone)";
-            } elseif (strlen($digitsOnly) === 7) {
+            } elseif ($len >= 8 && $len <= 9) {
+                $area = substr($digitsOnly, 0, 3);
+                $prefix = substr($digitsOnly, 3, 3);
+                $line = substr($digitsOnly, 6);
+                $redcapPhone = "($area) $prefix-$line";
+                $phoneVariants = array_unique([$redcapPhone, "$area-$prefix-$line", "$area $prefix $line", "$prefix-$line", $digitsOnly]);
+                $detectedBadges[] = "Phone ($redcapPhone)";
+            } elseif ($len === 7) {
                 $prefix = substr($digitsOnly, 0, 3);
                 $line = substr($digitsOnly, 3, 4);
-                $phoneVariants = array_unique(["$prefix-$line", $digitsOnly]);
+                $area7 = substr($digitsOnly, 0, 3);
+                $prefix7 = substr($digitsOnly, 3, 3);
+                $line1 = substr($digitsOnly, 6, 1);
+                $phoneVariants = array_unique(["$prefix-$line", "($area7) $prefix7-$line1", "$area7-$prefix7-$line1", $digitsOnly]);
                 $detectedBadges[] = "Phone ($prefix-$line)";
+            } elseif ($len === 6) {
+                $area = substr($digitsOnly, 0, 3);
+                $prefix = substr($digitsOnly, 3, 3);
+                $redcapPrefix = "($area) $prefix";
+                $phoneVariants = array_unique([$redcapPrefix, "$area-$prefix", "$area $prefix", "($area)$prefix", $digitsOnly]);
+                $detectedBadges[] = "Phone ($redcapPrefix)";
             }
         }
 
