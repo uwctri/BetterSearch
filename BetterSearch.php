@@ -962,7 +962,7 @@ class BetterSearch extends AbstractExternalModule
         }
         $qFast->addInClause('field_name', $tier1FieldNames);
 
-        [$orParts, $orParams] = $this->buildValueMatchClauses($raw, $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier1_enum_matches'], $fuzzyThreshold);
+        [$orParts, $orParams] = $this->buildValueMatchClauses($raw, $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier1_enum_matches'], $parsed['tokens'], $fuzzyThreshold);
         $limit = $fuzzyThreshold < 100 ? 1500 : 500;
         $qFast->add("AND (" . implode(" OR ", $orParts) . ") LIMIT $limit", $orParams);
 
@@ -1090,7 +1090,7 @@ class BetterSearch extends AbstractExternalModule
         }
         $qDeep->addInClause('field_name', $tier2Fields);
 
-        [$orParts, $orParams] = $this->buildValueMatchClauses($parsed['raw'], $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier2_enum_matches'], $fuzzyThreshold);
+        [$orParts, $orParams] = $this->buildValueMatchClauses($parsed['raw'], $parsed['date_variants'], $parsed['phone_variants'], $querySets['tier2_enum_matches'], $parsed['tokens'], $fuzzyThreshold);
         $limit = $fuzzyThreshold < 100 ? 1500 : 500;
         $qDeep->add("AND (" . implode(" OR ", $orParts) . ") LIMIT $limit", $orParams);
 
@@ -1100,12 +1100,34 @@ class BetterSearch extends AbstractExternalModule
     }
 
     /**
-     * Build SQL OR clauses and bind parameters for raw values, dates, phones, enum codes, and fuzzy n-grams.
+     * Build SQL OR clauses and bind parameters for raw values, dates, phones, enum codes, multi-token phrases, and fuzzy n-grams.
      */
-    protected function buildValueMatchClauses($raw, array $dateVariants, array $phoneVariants, array $enumMatches, int $fuzzyThreshold = 100)
+    protected function buildValueMatchClauses($raw, array $dateVariants, array $phoneVariants, array $enumMatches, array $tokens = [], int $fuzzyThreshold = 100)
     {
         $orParts = ["value LIKE ?"];
         $orParams = ['%' . $raw . '%'];
+
+        if (count($tokens) >= 2 && count($tokens) <= 6) {
+            $andConditions = [];
+            foreach ($tokens as $t) {
+                $andConditions[] = "value LIKE ?";
+                $orParams[] = '%' . $t . '%';
+            }
+            $orParts[] = "(" . implode(" AND ", $andConditions) . ")";
+
+            if ($fuzzyThreshold < 100 && count($tokens) >= 3) {
+                for ($skipIdx = 0; $skipIdx < count($tokens); $skipIdx++) {
+                    $subset = [];
+                    foreach ($tokens as $tIdx => $tVal) {
+                        if ($tIdx === $skipIdx)
+                            continue;
+                        $subset[] = "value LIKE ?";
+                        $orParams[] = '%' . $tVal . '%';
+                    }
+                    $orParts[] = "(" . implode(" AND ", $subset) . ")";
+                }
+            }
+        }
 
         foreach ($dateVariants as $dv) {
             $orParts[] = "value LIKE ?";
@@ -1123,7 +1145,7 @@ class BetterSearch extends AbstractExternalModule
             $orParams[] = $em['code'];
         }
 
-        if ($fuzzyThreshold < 100) {
+        if ($fuzzyThreshold < 100 && (empty($tokens) || count($tokens) <= 2)) {
             $fuzzyPatterns = $this->buildFuzzySqlPatterns($raw);
             foreach ($fuzzyPatterns as $fp) {
                 $orParts[] = "value LIKE ?";

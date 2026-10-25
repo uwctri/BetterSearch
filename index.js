@@ -286,18 +286,51 @@
                         return true;
             }
 
-            if (fuzzyThreshold < 100 && variants.length > 0 && variants[0].length >= 3) {
-                const qWord = variants[0];
-                const words = lower.split(/[\s,;:\-/().]+/).filter(Boolean);
-                for (let w = 0; w < words.length; w++) {
-                    const cand = words[w];
-                    const maxLen = Math.max(qWord.length, cand.length);
-                    if (maxLen === 0 || maxLen > 64 || Math.abs(qWord.length - cand.length) > Math.ceil(maxLen * 0.5))
-                        continue;
-                    const dist = damerauLevenshteinJs(qWord, cand);
-                    const pct = (1 - (dist / maxLen)) * 100;
-                    if (pct >= fuzzyThreshold)
+            if (variants.length > 0 && variants[0]) {
+                const qWords = variants[0].split(/[\s,;:\-/().]+/).filter((w) => w.length >= 2);
+                if (qWords.length > 1) {
+                    const hayWords = lower.split(/[\s,;:\-/().]+/).filter(Boolean);
+                    let allMatched = true;
+                    for (let qw = 0; qw < qWords.length; qw++) {
+                        const targetWord = qWords[qw];
+                        if (lower.indexOf(targetWord) !== -1)
+                            continue;
+                        if (fuzzyThreshold >= 100) {
+                            allMatched = false;
+                            break;
+                        }
+                        let wordFound = false;
+                        for (let hw = 0; hw < hayWords.length; hw++) {
+                            const cand = hayWords[hw];
+                            const maxLen = Math.max(targetWord.length, cand.length);
+                            if (maxLen === 0 || maxLen > 64 || Math.abs(targetWord.length - cand.length) > Math.ceil(maxLen * 0.5))
+                                continue;
+                            const dist = damerauLevenshteinJs(targetWord, cand);
+                            if (((1 - (dist / maxLen)) * 100) >= fuzzyThreshold) {
+                                wordFound = true;
+                                break;
+                            }
+                        }
+                        if (!wordFound) {
+                            allMatched = false;
+                            break;
+                        }
+                    }
+                    if (allMatched)
                         return true;
+                } else if (fuzzyThreshold < 100 && variants[0].length >= 3) {
+                    const qWord = variants[0];
+                    const words = lower.split(/[\s,;:\-/().]+/).filter(Boolean);
+                    for (let w = 0; w < words.length; w++) {
+                        const cand = words[w];
+                        const maxLen = Math.max(qWord.length, cand.length);
+                        if (maxLen === 0 || maxLen > 64 || Math.abs(qWord.length - cand.length) > Math.ceil(maxLen * 0.5))
+                            continue;
+                        const dist = damerauLevenshteinJs(qWord, cand);
+                        const pct = (1 - (dist / maxLen)) * 100;
+                        if (pct >= fuzzyThreshold)
+                            return true;
+                    }
                 }
             }
 
@@ -350,6 +383,9 @@
             }
 
             const allFields = rec.fields || [];
+            const searchableFields = allFields.slice();
+            for (let im = 0; im < initialMatches.length; im++)
+                searchableFields.push(initialMatches[im]);
 
             for (let t = 0; t < terms.length; t++) {
                 const rawTerm = terms[t].trim();
@@ -371,15 +407,15 @@
                     )
                         tokenMatched = true;
 
-                    for (let f = 0; f < allFields.length; f++) {
-                        const item = allFields[f];
+                    for (let f = 0; f < searchableFields.length; f++) {
+                        const item = searchableFields[f];
                         const isTuple = Array.isArray(item);
                         const fname = isTuple ? item[0] : item.field_name;
                         const val = isTuple ? item[1] : item.value;
                         const rawVal = isTuple ? item[2] : item.raw_value;
                         const evId = isTuple ? (item[3] || 0) : item.event_id;
                         const inst = isTuple ? (item[4] || 1) : item.instance;
-                        const fLabel = isTuple ? ((fieldMetaMap[fname] && fieldMetaMap[fname][0]) || fname) : item.field_label;
+                        const fLabel = isTuple ? ((fieldMetaMap[fname] && fieldMetaMap[fname][0]) || fname) : (item.field_label || fname);
 
                         if (
                             textContainsVariant(val, variants)
