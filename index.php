@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Better Search - Standalone Add/Edit Records Replacement Page
  *
@@ -115,10 +116,10 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                 $armRecCount = number_format($counts['arms'][(int) $armNum] ?? 0);
                 ?>
                 <a href="<?= htmlspecialchars($armUrl, ENT_QUOTES, 'UTF-8') ?>"
-                   class="bs-arm-tab <?= $isActive ? 'active' : '' ?>"
-                   data-arm="<?= (int) $armNum ?>"
-                   data-arm-name="<?= htmlspecialchars($armInfo['name'], ENT_QUOTES, 'UTF-8') ?>"
-                   data-arm-count="<?= htmlspecialchars($armRecCount, ENT_QUOTES, 'UTF-8') ?>">
+                    class="bs-arm-tab <?= $isActive ? 'active' : '' ?>"
+                    data-arm="<?= (int) $armNum ?>"
+                    data-arm-name="<?= htmlspecialchars($armInfo['name'], ENT_QUOTES, 'UTF-8') ?>"
+                    data-arm-count="<?= htmlspecialchars($armRecCount, ENT_QUOTES, 'UTF-8') ?>">
                     Arm <?= (int) $armNum ?>: <?= htmlspecialchars($armInfo['name'], ENT_QUOTES, 'UTF-8') ?>
                 </a>
             <?php endforeach; ?>
@@ -160,14 +161,13 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                             id="bs-search-input"
                             class="bs-input-text"
                             placeholder="Search by <?= htmlspecialchars($context['pk_label'], ENT_QUOTES, 'UTF-8') ?><?= $hasSecondaryPk ? ', ' . htmlspecialchars($context['secondary_pk_label'], ENT_QUOTES, 'UTF-8') : '' ?>, identifier, date, or any field value..."
-                            autofocus
-                        >
+                            autofocus>
                         <?php if ($canSelectDag): ?>
                             <select id="bs-dag-filter" class="bs-select" title="Filter search results by Data Access Group">
-                                <option value=""<?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
-                                <option value="none"<?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
+                                <option value="" <?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
+                                <option value="none" <?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
                                 <?php foreach ($context['dags'] as $gid => $gname): ?>
-                                    <option value="<?= (int) $gid ?>"<?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
+                                    <option value="<?= (int) $gid ?>" <?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
                                 <?php endforeach; ?>
                             </select>
                         <?php endif; ?>
@@ -193,18 +193,18 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
 
                 <div id="bs-settings-drawer" class="bs-settings-drawer">
                     <div class="bs-settings-title">
-                        <i class="fas fa-user-cog"></i> User Search Settings <span class="bs-settings-sub">(saved in browser cookies)</span>
+                        <i class="fas fa-user-cog"></i> User Search Settings
                     </div>
                     <div class="bs-settings-grid">
                         <div class="bs-setting-item">
                             <label class="bs-checkbox-label">
-                                <input type="checkbox" id="bs-enable-deep"<?= $enableDeepChecked ? ' checked' : '' ?>>
+                                <input type="checkbox" id="bs-enable-deep" <?= $enableDeepChecked ? ' checked' : '' ?>>
                                 Include deep search across all project fields (<?= $remainingFieldCount ?> additional fields)
                             </label>
                         </div>
                         <div class="bs-setting-item">
                             <label class="bs-checkbox-label">
-                                <input type="checkbox" id="bs-show-recent"<?= $showRecentChecked ? ' checked' : '' ?>>
+                                <input type="checkbox" id="bs-show-recent" <?= $showRecentChecked ? ' checked' : '' ?>>
                                 Show recently viewed records
                             </label>
                         </div>
@@ -212,10 +212,10 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                             <div class="bs-setting-item">
                                 <label for="bs-default-dag-setting" class="bs-setting-label">Default search Data Access Group:</label>
                                 <select id="bs-default-dag-setting" class="bs-select bs-select-sm">
-                                    <option value=""<?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
-                                    <option value="none"<?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
+                                    <option value="" <?= $defaultDagFilter === '' ? ' selected' : '' ?>>All Data Access Groups</option>
+                                    <option value="none" <?= $defaultDagFilter === 'none' ? ' selected' : '' ?>>[No DAG assigned]</option>
                                     <?php foreach ($context['dags'] as $gid => $gname): ?>
-                                        <option value="<?= (int) $gid ?>"<?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
+                                        <option value="<?= (int) $gid ?>" <?= $defaultDagFilter === (string) (int) $gid ? ' selected' : '' ?>><?= htmlspecialchars($gname, ENT_QUOTES, 'UTF-8') ?></option>
                                     <?php endforeach; ?>
                                 </select>
                             </div>
@@ -229,8 +229,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                 min="50"
                                 max="100"
                                 step="5"
-                                value="<?= (int) $fuzzyThreshold ?>"
-                            >
+                                value="<?= (int) $fuzzyThreshold ?>">
                             <strong id="bs-fuzzy-threshold-val"><?= $fuzzyThreshold >= 100 ? '100% (Off)' : ($fuzzyThreshold . '%') ?></strong>
                         </div>
                     </div>
@@ -282,8 +281,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                     id="bs-manual-id-input"
                                     class="bs-input-text"
                                     style="width:180px;min-width:140px;flex:none;"
-                                    placeholder="<?= htmlspecialchars($context['pk_label'], ENT_QUOTES, 'UTF-8') ?>"
-                                >
+                                    placeholder="<?= htmlspecialchars($context['pk_label'], ENT_QUOTES, 'UTF-8') ?>">
                                 <button type="submit" class="bs-btn bs-btn-add">
                                     <i class="fas fa-arrow-right"></i> <?= $canCreateRecord ? 'Create / Open' : 'Open' ?>
                                 </button>
@@ -341,8 +339,7 @@ $jsObjectName = $module->getJavascriptModuleObjectName();
                                         value="<?= (int) $savedPageSize ?>"
                                         min="1"
                                         max="500"
-                                        step="1"
-                                    >
+                                        step="1">
                                 </div>
                             </div>
                         </td>
